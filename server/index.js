@@ -343,9 +343,25 @@ function contentType(filePath) {
   return 'application/octet-stream';
 }
 
+function localAccessHeaders(extra = {}) {
+  return {
+    'access-control-allow-origin': '*',
+    'access-control-allow-methods': 'GET, OPTIONS',
+    'access-control-allow-headers': 'Content-Type, Access-Control-Request-Private-Network',
+    'access-control-allow-private-network': 'true',
+    ...extra,
+  };
+}
+
 const server = http.createServer((req, res) => {
+  if (req.method === 'OPTIONS') {
+    res.writeHead(204, localAccessHeaders());
+    res.end();
+    return;
+  }
+
   if (req.url === '/health') {
-    res.writeHead(200, { 'content-type': 'application/json' });
+    res.writeHead(200, localAccessHeaders({ 'content-type': 'application/json' }));
     res.end(JSON.stringify({ ok: true, lobbies: lobbies.size }));
     return;
   }
@@ -355,14 +371,14 @@ const server = http.createServer((req, res) => {
   if (urlPath.startsWith('/assets-kenny/')) {
     const assetPath = path.normalize(path.join(rootDir, urlPath));
     if (!assetPath.startsWith(kenneyAssetsDir) || !fs.existsSync(assetPath) || fs.statSync(assetPath).isDirectory()) {
-      res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
+      res.writeHead(404, localAccessHeaders({ 'content-type': 'text/plain; charset=utf-8' }));
       res.end('Asset not found.');
       return;
     }
-    res.writeHead(200, {
+    res.writeHead(200, localAccessHeaders({
       'content-type': contentType(assetPath),
       'cache-control': 'public, max-age=3600',
-    });
+    }));
     fs.createReadStream(assetPath).pipe(res);
     return;
   }
@@ -370,16 +386,20 @@ const server = http.createServer((req, res) => {
   const requested = urlPath === '/' ? '/index.html' : urlPath;
   const filePath = path.normalize(path.join(distDir, requested));
   if (!filePath.startsWith(distDir) || !fs.existsSync(filePath) || fs.statSync(filePath).isDirectory()) {
-    res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
+    res.writeHead(404, localAccessHeaders({ 'content-type': 'text/plain; charset=utf-8' }));
     res.end('Build the client with npm run build, or run Vite separately on port 5177.');
     return;
   }
 
-  res.writeHead(200, { 'content-type': contentType(filePath) });
+  res.writeHead(200, localAccessHeaders({ 'content-type': contentType(filePath) }));
   fs.createReadStream(filePath).pipe(res);
 });
 
 const wss = new WebSocketServer({ server });
+wss.on('headers', (headers) => {
+  headers.push('Access-Control-Allow-Origin: *');
+  headers.push('Access-Control-Allow-Private-Network: true');
+});
 wss.on('connection', (ws) => {
   send(ws, 'session:hello', { maxPlayers });
   ws.on('message', (raw) => handleMessage(ws, raw));
