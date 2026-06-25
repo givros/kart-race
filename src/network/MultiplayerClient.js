@@ -1,4 +1,6 @@
 export class MultiplayerClient extends EventTarget {
+  static PUBLIC_SERVER_URL = 'wss://givros-kart-race.loca.lt';
+
   constructor() {
     super();
     this.socket = null;
@@ -21,7 +23,7 @@ export class MultiplayerClient extends EventTarget {
     const configured = import.meta.env.VITE_WS_URL;
     if (configured) return this.normalizeWsUrl(configured);
     if (window.location.hostname.endsWith('github.io')) {
-      return 'ws://127.0.0.1:8787';
+      return MultiplayerClient.PUBLIC_SERVER_URL;
     }
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const host = window.location.hostname || '127.0.0.1';
