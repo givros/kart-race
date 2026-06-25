@@ -7,7 +7,7 @@ import { setTimeout as wait } from 'node:timers/promises';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, '..');
 const port = Number(process.env.PORT ?? 8787);
-const subdomain = process.env.PUBLIC_SUBDOMAIN ?? 'givros-kart-race';
+const subdomain = process.env.PUBLIC_SUBDOMAIN ?? 'kart-race-givros-public';
 const publicPage = 'https://givros.github.io/kart-race/';
 const publicSocket = `wss://${subdomain}.loca.lt`;
 const localHealth = `http://127.0.0.1:${port}/health`;

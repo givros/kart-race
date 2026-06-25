@@ -1,5 +1,5 @@
 export class MultiplayerClient extends EventTarget {
-  static PUBLIC_SERVER_URL = 'wss://givros-kart-race.loca.lt';
+  static PUBLIC_SERVER_URL = 'wss://kart-race-givros-public.loca.lt';
 
   constructor() {
     super();
