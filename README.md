@@ -17,7 +17,7 @@ Puis les joueurs ouvrent simplement :
 https://givros.github.io/kart-race/
 ```
 
-Le terminal doit rester ouvert pendant la session. Quand tu fermes le terminal, la partie publique n'est plus accessible.
+Attends que le terminal affiche `Session publique prete.` avant d'envoyer le lien. Le terminal doit rester ouvert pendant la session. Quand tu fermes le terminal, la partie publique n'est plus accessible.
 
 ## Local
 

@@ -8,7 +8,7 @@
     "server": "node server/index.js",
     "start": "node server/index.js",
     "public": "node server/public.js",
-    "tunnel": "npx --yes localtunnel --port 8787 --local-host 127.0.0.1 --subdomain kart-race-givros-public",
+    "tunnel": "npx --yes localtunnel --port 8787 --local-host 127.0.0.1",
     "build": "vite build",
     "preview": "vite preview --host 0.0.0.0"
   },

@@ -1,5 +1,6 @@
 export class MultiplayerClient extends EventTarget {
-  static PUBLIC_SERVER_URL = 'wss://kart-race-givros-public.loca.lt';
+  static FALLBACK_PUBLIC_SERVER_URL = 'wss://kart-race-givros-public.loca.lt';
+  static PUBLIC_CONFIG_URL = 'https://raw.githubusercontent.com/givros/kart-race/main/public/server.json';
 
   constructor() {
     super();
@@ -10,6 +11,7 @@ export class MultiplayerClient extends EventTarget {
     this.connecting = false;
     this.lastError = '';
     this.wsUrl = this.resolveWsUrl();
+    this.configReady = this.loadServerConfig();
     this.sessionToken = this.getOrCreateSessionToken();
     this.savedLobbyCode = window.localStorage.getItem('kartingLobbyCode') ?? '';
     this.savedName = window.localStorage.getItem('kartingPlayerName') ?? 'Player';
@@ -23,11 +25,26 @@ export class MultiplayerClient extends EventTarget {
     const configured = import.meta.env.VITE_WS_URL;
     if (configured) return this.normalizeWsUrl(configured);
     if (window.location.hostname.endsWith('github.io')) {
-      return MultiplayerClient.PUBLIC_SERVER_URL;
+      return MultiplayerClient.FALLBACK_PUBLIC_SERVER_URL;
     }
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const host = window.location.hostname || '127.0.0.1';
     return `${protocol}//${host}:8787`;
+  }
+
+  async loadServerConfig() {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('ws') || import.meta.env.VITE_WS_URL || !window.location.hostname.endsWith('github.io')) return;
+
+    try {
+      const url = `${MultiplayerClient.PUBLIC_CONFIG_URL}?t=${Date.now()}`;
+      const response = await fetch(url, { cache: 'no-store' });
+      if (!response.ok) return;
+      const config = await response.json();
+      if (config?.wsUrl) this.wsUrl = this.normalizeWsUrl(config.wsUrl);
+    } catch {
+      // Keep the fallback URL if the public config cannot be loaded.
+    }
   }
 
   normalizeWsUrl(value) {
@@ -95,9 +112,13 @@ export class MultiplayerClient extends EventTarget {
   }
 
   send(type, payload = {}) {
+    this.configReady.then(() => this.sendNow(type, payload));
+  }
+
+  sendNow(type, payload = {}) {
     this.connect();
     if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
-      window.setTimeout(() => this.send(type, payload), 120);
+      window.setTimeout(() => this.sendNow(type, payload), 120);
       return;
     }
     this.socket.send(JSON.stringify({ type, ...payload }));
