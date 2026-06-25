@@ -119,7 +119,9 @@ const tunnel = spawnChild(npx, [
   '127.0.0.1',
   '--subdomain',
   subdomain,
-]);
+], {
+  shell: isWindows(),
+});
 pipeOutput(tunnel, 'tunnel');
 tunnel.once('exit', (code) => {
   console.error(`Tunnel public arrete avec le code ${code}.`);
