@@ -597,11 +597,13 @@ export class Game {
   bindMultiplayer() {
     this.multiplayer.addEventListener('status', (event) => {
       this.lobbyUI.setStatus(event.detail.label);
+      if (event.detail.label === 'Connecte') this.lobbyUI.setError('');
     });
     this.multiplayer.addEventListener('error', (event) => {
       this.lobbyUI.setError(event.detail.message);
     });
     this.multiplayer.addEventListener('joined', (event) => {
+      this.lobbyUI.setError('');
       this.multiplayerMode = 'multiplayer';
       this.player.id = event.detail.playerId;
       this.setAIMeshesVisible(false);
@@ -614,6 +616,7 @@ export class Game {
       }
     });
     this.multiplayer.addEventListener('lobby', (event) => {
+      this.lobbyUI.setError('');
       this.applyLocalPlayerLivery(event.detail.lobby.players ?? []);
       this.lobbyUI.updateLobby(event.detail.lobby, this.player.id);
       this.syncRemotePlayers(event.detail.lobby.players ?? []);
