@@ -1,7 +1,5 @@
 export class MultiplayerClient extends EventTarget {
   static FALLBACK_PUBLIC_SERVER_URL = 'wss://kart-race-givros-public.loca.lt';
-  static PUBLIC_CONFIG_URL = 'https://raw.githubusercontent.com/givros/kart-race/main/public/server.json';
-
   constructor() {
     super();
     this.socket = null;
@@ -37,7 +35,10 @@ export class MultiplayerClient extends EventTarget {
     if (params.get('ws') || import.meta.env.VITE_WS_URL || !window.location.hostname.endsWith('github.io')) return;
 
     try {
-      const url = `${MultiplayerClient.PUBLIC_CONFIG_URL}?t=${Date.now()}`;
+      const base = `${import.meta.env.BASE_URL ?? '/'}`.endsWith('/')
+        ? `${import.meta.env.BASE_URL ?? '/'}`
+        : `${import.meta.env.BASE_URL ?? '/'}/`;
+      const url = `${base}server.json?t=${Date.now()}`;
       const response = await fetch(url, { cache: 'no-store' });
       if (!response.ok) return;
       const config = await response.json();
