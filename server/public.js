@@ -11,7 +11,15 @@ const configPath = path.join(rootDir, 'public', 'server.json');
 const port = Number(process.env.PORT ?? 8787);
 const publicPage = 'https://givros.github.io/kart-race/';
 const localHealth = `http://127.0.0.1:${port}/health`;
+const tunnelHealthIntervalMs = 15000;
+const tunnelHealthFailuresBeforeRestart = 2;
+const tunnelHealthAttempts = 12;
 const children = new Set();
+let activeTunnel = null;
+let activeTunnelUrl = '';
+let tunnelFailures = 0;
+let restartingTunnel = false;
+let shuttingDown = false;
 
 function isWindows() {
   return process.platform === 'win32';
@@ -48,6 +56,7 @@ function stopChild(child) {
 }
 
 function cleanup() {
+  shuttingDown = true;
   for (const child of children) stopChild(child);
 }
 
@@ -144,6 +153,33 @@ async function startTunnel() {
   });
 }
 
+async function tunnelHealthCheck(tunnelUrl, timeoutMs = 5000) {
+  const controller = new AbortController();
+  const timeout = globalThis.setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(`${tunnelUrl.replace(/\/$/u, '')}/health`, {
+      cache: 'no-store',
+      headers: {
+        'bypass-tunnel-reminder': '1',
+      },
+      signal: controller.signal,
+    });
+    return response.ok;
+  } catch {
+    return false;
+  } finally {
+    globalThis.clearTimeout(timeout);
+  }
+}
+
+async function waitForTunnelHealth(tunnelUrl) {
+  for (let attempt = 0; attempt < tunnelHealthAttempts; attempt += 1) {
+    if (await tunnelHealthCheck(tunnelUrl)) return true;
+    await wait(1000);
+  }
+  return false;
+}
+
 async function publishServerUrl(tunnelUrl) {
   const wsUrl = tunnelUrl.replace(/^https:/i, 'wss:');
   await fs.writeFile(`${configPath}`, `${JSON.stringify({ wsUrl }, null, 2)}\n`, 'utf8');
@@ -158,6 +194,85 @@ async function publishServerUrl(tunnelUrl) {
   }
 
   return wsUrl;
+}
+
+async function rotateTunnel(reason = 'initialisation') {
+  if (restartingTunnel) return null;
+  restartingTunnel = true;
+  try {
+    if (activeTunnel) {
+      stopChild(activeTunnel);
+      activeTunnel = null;
+      activeTunnelUrl = '';
+      await wait(1000);
+    }
+
+    for (let attempt = 1; attempt <= 5; attempt += 1) {
+      let tunnel = null;
+      try {
+        console.log(`Ouverture tunnel public (${reason}, tentative ${attempt}/5)...`);
+        const opened = await startTunnel();
+        tunnel = opened.tunnel;
+        activeTunnel = tunnel;
+        activeTunnelUrl = opened.url;
+
+        tunnel.once('exit', (code) => {
+          if (shuttingDown || activeTunnel !== tunnel) return;
+          console.error(`Tunnel public arrete avec le code ${code}. Relance...`);
+          activeTunnel = null;
+          activeTunnelUrl = '';
+          void rotateTunnel(`tunnel arrete (${code})`).catch((error) => {
+            console.error(error?.message ?? error);
+            cleanup();
+            process.exit(1);
+          });
+        });
+
+        if (!(await waitForTunnelHealth(opened.url))) {
+          throw new Error(`Tunnel public injoignable sur ${opened.url}`);
+        }
+
+        const wsUrl = await publishServerUrl(opened.url);
+        tunnelFailures = 0;
+        console.log('');
+        console.log('Session publique prete.');
+        console.log(`Serveur public : ${wsUrl}`);
+        console.log(`Les joueurs ouvrent : ${publicPage}`);
+        console.log('Garde ce terminal ouvert pendant la partie.');
+        console.log('');
+        return wsUrl;
+      } catch (error) {
+        console.error(`Echec tunnel public: ${error?.message ?? error}`);
+        if (tunnel) stopChild(tunnel);
+        if (activeTunnel === tunnel) {
+          activeTunnel = null;
+          activeTunnelUrl = '';
+        }
+        await wait(2500);
+      }
+    }
+
+    throw new Error('Impossible de relancer un tunnel public stable.');
+  } finally {
+    restartingTunnel = false;
+  }
+}
+
+async function watchTunnel() {
+  while (!shuttingDown) {
+    await wait(tunnelHealthIntervalMs);
+    if (shuttingDown || restartingTunnel || !activeTunnelUrl) continue;
+    if (await tunnelHealthCheck(activeTunnelUrl)) {
+      tunnelFailures = 0;
+      continue;
+    }
+
+    tunnelFailures += 1;
+    console.error(`Tunnel public non joignable (${tunnelFailures}/${tunnelHealthFailuresBeforeRestart}).`);
+    if (tunnelFailures >= tunnelHealthFailuresBeforeRestart) {
+      await rotateTunnel('healthcheck echec');
+    }
+  }
 }
 
 process.on('SIGINT', () => {
@@ -177,20 +292,12 @@ console.log('');
 
 try {
   await startServer();
-  const { tunnel, url } = await startTunnel();
-  const wsUrl = await publishServerUrl(url);
-  tunnel.once('exit', (code) => {
-    console.error(`Tunnel public arrete avec le code ${code}.`);
+  await rotateTunnel('demarrage');
+  void watchTunnel().catch((error) => {
+    console.error(error?.message ?? error);
     cleanup();
-    process.exit(code ?? 1);
+    process.exit(1);
   });
-
-  console.log('');
-  console.log('Session publique prete.');
-  console.log(`Serveur public : ${wsUrl}`);
-  console.log(`Les joueurs ouvrent : ${publicPage}`);
-  console.log('Garde ce terminal ouvert pendant la partie.');
-  console.log('');
 } catch (error) {
   console.error(error?.message ?? error);
   cleanup();
