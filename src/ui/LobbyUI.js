@@ -46,6 +46,7 @@ export class LobbyUI {
         </div>
         <p class="lobby-error" data-error></p>
         <p class="lobby-network" data-status>Offline</p>
+        <p class="lobby-credits">Assets par <a href="https://www.kenney.nl/" target="_blank" rel="noopener noreferrer">Kenney</a></p>
       </section>
       <div class="lobby-race-badge" data-badge hidden>
         <span data-badge-code></span>
@@ -125,6 +126,7 @@ export class LobbyUI {
       .lobby-brand span,
       .lobby-network,
       .lobby-error,
+      .lobby-credits,
       .room-topline span,
       .room-status,
       .player-row span,
@@ -272,10 +274,15 @@ export class LobbyUI {
       }
 
       .lobby-error,
-      .lobby-network {
+      .lobby-network,
+      .lobby-credits {
         margin: 0;
-        padding: 0 14px 12px;
         min-height: 14px;
+      }
+
+      .lobby-error,
+      .lobby-network {
+        padding: 0 14px 12px;
       }
 
       .lobby-error {
@@ -284,6 +291,20 @@ export class LobbyUI {
 
       .lobby-network {
         color: rgba(248, 251, 255, 0.56);
+      }
+
+      .lobby-credits {
+        padding: 0 14px 14px;
+        color: rgba(248, 251, 255, 0.48);
+      }
+
+      .lobby-credits a {
+        color: #ffca3a;
+        text-decoration: none;
+      }
+
+      .lobby-credits a:hover {
+        text-decoration: underline;
       }
 
       .lobby-race-badge {
