@@ -1,0 +1,16 @@
+{
+  "name": "kart-race-mmo-server",
+  "version": "1.0.0",
+  "private": true,
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "health": "node -e \"fetch('http://127.0.0.1:' + (process.env.PORT || 8787) + '/health').then(r => r.text()).then(console.log)\""
+  },
+  "dependencies": {
+    "ws": "^8.21.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
