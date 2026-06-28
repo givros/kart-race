@@ -1,5 +1,5 @@
 export class MultiplayerClient extends EventTarget {
-  static FALLBACK_PUBLIC_SERVER_URL = 'wss://kart-race-givros-public.loca.lt';
+  static FALLBACK_PUBLIC_SERVER_URL = 'wss://ws.givros-studio.fr';
   constructor() {
     super();
     this.socket = null;
@@ -9,6 +9,10 @@ export class MultiplayerClient extends EventTarget {
     this.connecting = false;
     this.lastError = '';
     this.wsUrl = this.resolveWsUrl();
+    this.transport = 'websocket';
+    this.httpClientId = null;
+    this.httpConnecting = false;
+    this.httpPolling = false;
     this.configReady = this.loadServerConfig();
     this.sessionToken = this.getOrCreateSessionToken();
     this.savedLobbyCode = window.localStorage.getItem('kartingLobbyCode') ?? '';
@@ -90,26 +94,105 @@ export class MultiplayerClient extends EventTarget {
   }
 
   connect() {
-    if (this.connected || this.connecting) return;
+    if (this.connected || this.connecting || this.httpConnecting) return;
+    if (this.transport === 'http') {
+      this.startHttpTransport();
+      return;
+    }
     this.connecting = true;
     this.emit('status', { label: 'Connexion...' });
 
     this.socket = new WebSocket(this.wsUrl);
+    let opened = false;
     this.socket.addEventListener('open', () => {
+      opened = true;
       this.connected = true;
       this.connecting = false;
       this.emit('status', { label: 'Connecte' });
     });
     this.socket.addEventListener('close', () => {
+      if (!opened && this.transport !== 'http') {
+        this.startHttpTransport();
+        return;
+      }
+      if (this.transport === 'http' || this.httpConnecting) return;
       this.connected = false;
       this.connecting = false;
       this.emit('status', { label: 'Deconnecte' });
     });
     this.socket.addEventListener('error', () => {
+      if (!opened) {
+        this.startHttpTransport();
+        return;
+      }
       this.lastError = 'Connexion serveur impossible.';
       this.emit('error', { message: this.lastError });
     });
     this.socket.addEventListener('message', (event) => this.handleMessage(event.data));
+  }
+
+  httpBaseUrl() {
+    return this.wsUrl
+      .replace(/^wss:/i, 'https:')
+      .replace(/^ws:/i, 'http:')
+      .replace(/\/$/u, '');
+  }
+
+  async startHttpTransport() {
+    if (this.connected || this.httpConnecting) return;
+    this.transport = 'http';
+    this.httpConnecting = true;
+    this.connecting = true;
+    this.emit('status', { label: 'Connexion HTTP...' });
+
+    try {
+      const response = await fetch(`${this.httpBaseUrl()}/connect`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: '{}',
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const payload = await response.json();
+      this.httpClientId = payload.clientId;
+      this.connected = true;
+      this.connecting = false;
+      this.httpConnecting = false;
+      this.lastError = '';
+      this.emit('status', { label: 'Connecte' });
+      this.emit('error', { message: '' });
+      this.consumeHttpMessages(payload.messages);
+      this.pollHttp();
+    } catch {
+      this.connected = false;
+      this.connecting = false;
+      this.httpConnecting = false;
+      this.lastError = 'Connexion serveur impossible.';
+      this.emit('status', { label: 'Deconnecte' });
+      this.emit('error', { message: this.lastError });
+    }
+  }
+
+  consumeHttpMessages(messages) {
+    for (const raw of messages ?? []) {
+      this.handleMessage(raw);
+    }
+  }
+
+  async pollHttp() {
+    if (this.httpPolling || this.transport !== 'http' || !this.httpClientId) return;
+    this.httpPolling = true;
+    while (this.transport === 'http' && this.httpClientId) {
+      try {
+        const url = `${this.httpBaseUrl()}/poll?clientId=${encodeURIComponent(this.httpClientId)}&t=${Date.now()}`;
+        const response = await fetch(url, { cache: 'no-store' });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const payload = await response.json();
+        this.consumeHttpMessages(payload.messages);
+      } catch {
+        await new Promise((resolve) => window.setTimeout(resolve, 1000));
+      }
+    }
+    this.httpPolling = false;
   }
 
   send(type, payload = {}) {
@@ -118,11 +201,38 @@ export class MultiplayerClient extends EventTarget {
 
   sendNow(type, payload = {}) {
     this.connect();
+    if (this.transport === 'http') {
+      if (!this.connected || !this.httpClientId) {
+        window.setTimeout(() => this.sendNow(type, payload), 160);
+        return;
+      }
+      this.sendHttpMessage(type, payload);
+      return;
+    }
     if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
       window.setTimeout(() => this.sendNow(type, payload), 120);
       return;
     }
     this.socket.send(JSON.stringify({ type, ...payload }));
+  }
+
+  async sendHttpMessage(type, payload = {}) {
+    try {
+      const response = await fetch(`${this.httpBaseUrl()}/send`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          clientId: this.httpClientId,
+          message: { type, ...payload },
+        }),
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    } catch {
+      this.connected = false;
+      this.lastError = 'Connexion serveur impossible.';
+      this.emit('status', { label: 'Deconnecte' });
+      this.emit('error', { message: this.lastError });
+    }
   }
 
   createLobby(name) {

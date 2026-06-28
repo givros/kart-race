@@ -4,9 +4,12 @@ const { WebSocket, WebSocketServer } = require('ws');
 const maxPlayers = Number(process.env.MAX_PLAYERS || 15);
 const lobbyCodeLength = 5;
 const heartbeatMs = Number(process.env.HEARTBEAT_MS || 30000);
+const httpPollMs = Number(process.env.HTTP_POLL_MS || 25000);
+const httpClientTtlMs = Number(process.env.HTTP_CLIENT_TTL_MS || 90000);
 
 const lobbies = new Map();
 const sockets = new Map();
+const httpClients = new Map();
 
 const palette = [
   0xffd23f, 0x2f80ed, 0xeb5757, 0x27ae60, 0x9b51e0,
@@ -64,9 +67,44 @@ function pickLivery(lobby) {
   };
 }
 
-function send(ws, type, payload = {}) {
-  if (!ws || ws.readyState !== WebSocket.OPEN) return;
-  ws.send(JSON.stringify({ type, ...payload }));
+function flushHttpClient(client) {
+  if (!client.waiter || !client.queue.length) return;
+  const waiter = client.waiter;
+  client.waiter = null;
+  clearTimeout(waiter.timeout);
+  waiter.res.writeHead(200, accessHeaders({ 'content-type': 'application/json; charset=utf-8' }));
+  waiter.res.end(JSON.stringify({ messages: client.queue.splice(0) }));
+}
+
+function closePeer(peer, code = 1000, reason = 'Closed') {
+  if (!peer) return;
+  if (peer.transport === 'http') {
+    peer.closed = true;
+    httpClients.delete(peer.clientId);
+    leaveLobby(peer);
+    if (peer.waiter) {
+      const waiter = peer.waiter;
+      peer.waiter = null;
+      clearTimeout(waiter.timeout);
+      waiter.res.writeHead(200, accessHeaders({ 'content-type': 'application/json; charset=utf-8' }));
+      waiter.res.end(JSON.stringify({ messages: [] }));
+    }
+    return;
+  }
+  if (typeof peer.close === 'function') peer.close(code, reason);
+}
+
+function send(peer, type, payload = {}) {
+  if (!peer) return;
+  const message = JSON.stringify({ type, ...payload });
+  if (peer.transport === 'http') {
+    if (peer.closed) return;
+    peer.queue.push(message);
+    flushHttpClient(peer);
+    return;
+  }
+  if (peer.readyState !== WebSocket.OPEN) return;
+  peer.send(message);
 }
 
 function broadcast(lobby, type, payload = {}, exceptId = null) {
@@ -108,11 +146,7 @@ function findPlayerBySession(lobby, sessionToken) {
 function attachPlayerSocket(lobby, player, ws, name = null) {
   if (player.ws && player.ws !== ws) {
     sockets.delete(player.ws);
-    try {
-      player.ws.close(4000, 'Session resumed elsewhere');
-    } catch {
-      // The old socket may already be closed during a browser refresh.
-    }
+    closePeer(player.ws, 4000, 'Session resumed elsewhere');
   }
 
   player.ws = ws;
@@ -325,6 +359,114 @@ function handleMessage(ws, raw) {
   }
 }
 
+function readJsonBody(req) {
+  return new Promise((resolve, reject) => {
+    let body = '';
+    req.on('data', (chunk) => {
+      body += chunk;
+      if (body.length > 1024 * 64) {
+        reject(new Error('Body too large'));
+        req.destroy();
+      }
+    });
+    req.on('end', () => {
+      if (!body) {
+        resolve({});
+        return;
+      }
+      try {
+        resolve(JSON.parse(body));
+      } catch (error) {
+        reject(error);
+      }
+    });
+    req.on('error', reject);
+  });
+}
+
+function sendJson(res, status, payload) {
+  res.writeHead(status, accessHeaders({ 'content-type': 'application/json; charset=utf-8' }));
+  res.end(JSON.stringify(payload));
+}
+
+function createHttpClient() {
+  const client = {
+    transport: 'http',
+    clientId: makeId('c'),
+    readyState: WebSocket.OPEN,
+    queue: [],
+    waiter: null,
+    closed: false,
+    lastSeen: Date.now(),
+  };
+  httpClients.set(client.clientId, client);
+  send(client, 'session:hello', { maxPlayers });
+  return client;
+}
+
+function getHttpClient(id) {
+  const client = httpClients.get(String(id || ''));
+  if (!client || client.closed) return null;
+  client.lastSeen = Date.now();
+  return client;
+}
+
+async function handleHttpConnect(req, res) {
+  if (req.method !== 'POST') {
+    sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+    return;
+  }
+  const client = createHttpClient();
+  sendJson(res, 200, {
+    ok: true,
+    clientId: client.clientId,
+    messages: client.queue.splice(0),
+  });
+}
+
+async function handleHttpSend(req, res) {
+  if (req.method !== 'POST') {
+    sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+    return;
+  }
+  try {
+    const body = await readJsonBody(req);
+    const client = getHttpClient(body.clientId);
+    if (!client) {
+      sendJson(res, 404, { ok: false, error: 'Client not found' });
+      return;
+    }
+    handleMessage(client, JSON.stringify(body.message || {}));
+    sendJson(res, 200, { ok: true });
+  } catch {
+    sendJson(res, 400, { ok: false, error: 'Invalid message' });
+  }
+}
+
+function handleHttpPoll(url, res) {
+  const client = getHttpClient(url.searchParams.get('clientId'));
+  if (!client) {
+    sendJson(res, 404, { ok: false, error: 'Client not found', messages: [] });
+    return;
+  }
+  if (client.queue.length) {
+    sendJson(res, 200, { ok: true, messages: client.queue.splice(0) });
+    return;
+  }
+  if (client.waiter) {
+    clearTimeout(client.waiter.timeout);
+    client.waiter.res.writeHead(200, accessHeaders({ 'content-type': 'application/json; charset=utf-8' }));
+    client.waiter.res.end(JSON.stringify({ ok: true, messages: [] }));
+  }
+  const timeout = setTimeout(() => {
+    if (!client.waiter) return;
+    client.waiter = null;
+    res.writeHead(200, accessHeaders({ 'content-type': 'application/json; charset=utf-8' }));
+    res.end(JSON.stringify({ ok: true, messages: [] }));
+  }, httpPollMs);
+  client.waiter = { res, timeout };
+}
+
 function accessHeaders(extra = {}) {
   return {
     'access-control-allow-origin': '*',
@@ -343,6 +485,19 @@ const server = http.createServer((req, res) => {
   }
 
   const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
+  if (url.pathname === '/connect') {
+    void handleHttpConnect(req, res);
+    return;
+  }
+  if (url.pathname === '/send') {
+    void handleHttpSend(req, res);
+    return;
+  }
+  if (url.pathname === '/poll') {
+    handleHttpPoll(url, res);
+    return;
+  }
+
   if (url.pathname === '/health') {
     const connectedPlayers = [...lobbies.values()]
       .flatMap((lobby) => [...lobby.players.values()])
@@ -355,6 +510,7 @@ const server = http.createServer((req, res) => {
       lobbies: lobbies.size,
       connectedPlayers,
       maxPlayers,
+      transports: ['websocket', 'http-polling'],
     }));
     return;
   }
@@ -390,6 +546,13 @@ const heartbeat = setInterval(() => {
     ws.ping();
   }
 }, heartbeatMs);
+
+setInterval(() => {
+  const now = Date.now();
+  for (const client of httpClients.values()) {
+    if (now - client.lastSeen > httpClientTtlMs) closePeer(client, 1001, 'HTTP client expired');
+  }
+}, Math.max(heartbeatMs, 15000));
 
 function shutdown() {
   clearInterval(heartbeat);
