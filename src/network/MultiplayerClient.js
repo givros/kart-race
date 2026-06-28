@@ -32,7 +32,7 @@ export class MultiplayerClient extends EventTarget {
 
   async loadServerConfig() {
     const params = new URLSearchParams(window.location.search);
-    if (params.get('ws') || import.meta.env.VITE_WS_URL || !window.location.hostname.endsWith('github.io')) return;
+    if (params.get('ws') || import.meta.env.VITE_WS_URL) return;
 
     try {
       const base = `${import.meta.env.BASE_URL ?? '/'}`.endsWith('/')
