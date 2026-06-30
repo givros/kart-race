@@ -1,4 +1,3 @@
-import * as THREE from 'three';
 import { SceneManager } from './SceneManager.js';
 import { Track } from '../world/Track.js';
 import { TrackDecor } from '../world/TrackDecor.js';
@@ -15,10 +14,6 @@ import { LobbyUI } from '../ui/LobbyUI.js';
 import { MultiplayerClient } from '../network/MultiplayerClient.js';
 import { angleDifference } from '../utils/math.js';
 
-const slipForward = new THREE.Vector3();
-const slipRelative = new THREE.Vector3();
-const slipLateral = new THREE.Vector3();
-
 const AI_COLORS = [
   [0x2f80ed, 0xf5f5f0],
   [0xeb5757, 0x20242a],
@@ -29,8 +24,8 @@ const AI_COLORS = [
   [0xbb6bd9, 0xfff2a8],
 ];
 
-const RACE_SAVE_KEY = 'kartingActiveRaceStateV1';
-const RACE_SAVE_VERSION = 1;
+const RACE_SAVE_KEY = 'kartingActiveRaceStateV2';
+const RACE_SAVE_VERSION = 2;
 const RACE_SAVE_INTERVAL = 0.35;
 const RACE_SAVE_MAX_AGE = 1000 * 60 * 60 * 6;
 const WRONG_WAY_RESET_SECONDS = 5;
@@ -51,7 +46,10 @@ export class Game {
     );
     this.karts = [this.player, ...this.aiKarts];
     this.raceManager = new RaceManager(this.track, 2);
-    this.itemSystem = new ItemSystem(this.sceneManager.scene, this.track);
+    this.itemSystem = new ItemSystem(this.sceneManager.scene, this.track, {
+      enabled: false,
+      populate: false,
+    });
     this.cameraController = new CameraController(this.sceneManager.camera, this.track);
     this.hud = new HUD({
       onRestart: () => this.resetRace(),
@@ -141,7 +139,7 @@ export class Game {
     this.raceManager.tickPhase(dt);
     const raceRunning = this.raceManager.isRunning();
     if (wasCountdown && raceRunning) {
-      this.applyRocketStart(playerInput, countdownBefore);
+      this.applyRocketStart();
     }
 
     const activeKarts = this.getActiveKarts();
@@ -167,7 +165,7 @@ export class Game {
       return;
     }
 
-    this.applySlipstream(dt, raceRunning);
+    this.applySlipstream();
 
     const playerControls = raceRunning
       ? playerInput
@@ -364,20 +362,20 @@ export class Game {
       driftCharge: kart.driftCharge,
       driftDirection: kart.driftDirection,
       wasDrifting: kart.wasDrifting,
-      boostTimer: kart.boostTimer,
-      coinCount: kart.coinCount,
-      heldItem: this.snapshotItem(kart.heldItem),
-      pendingItem: this.snapshotItem(kart.pendingItem),
-      itemRouletteTimer: kart.itemRouletteTimer,
-      itemUseCooldown: kart.itemUseCooldown,
+      boostTimer: 0,
+      coinCount: 0,
+      heldItem: null,
+      pendingItem: null,
+      itemRouletteTimer: 0,
+      itemUseCooldown: 0,
       aiItemDelay: kart.aiItemDelay,
-      invincibleTimer: kart.invincibleTimer,
-      stunTimer: kart.stunTimer,
-      slowTimer: kart.slowTimer,
+      invincibleTimer: 0,
+      stunTimer: 0,
+      slowTimer: 0,
       visualScale: kart.visualScale,
-      slipstreamCharge: kart.slipstreamCharge,
-      jumpTimer: kart.jumpTimer,
-      jumpDuration: kart.jumpDuration,
+      slipstreamCharge: 0,
+      jumpTimer: 0,
+      jumpDuration: 0,
     };
   }
 
@@ -402,20 +400,20 @@ export class Game {
     kart.driftCharge = Number(snapshot.driftCharge ?? 0);
     kart.driftDirection = Number(snapshot.driftDirection ?? 0);
     kart.wasDrifting = Boolean(snapshot.wasDrifting);
-    kart.boostTimer = Number(snapshot.boostTimer ?? 0);
-    kart.coinCount = Number(snapshot.coinCount ?? 0);
-    kart.heldItem = this.restoreItem(snapshot.heldItem);
-    kart.pendingItem = this.restoreItem(snapshot.pendingItem);
-    kart.itemRouletteTimer = Number(snapshot.itemRouletteTimer ?? 0);
-    kart.itemUseCooldown = Number(snapshot.itemUseCooldown ?? 0);
-    kart.aiItemDelay = Number(snapshot.aiItemDelay ?? 0);
-    kart.invincibleTimer = Number(snapshot.invincibleTimer ?? 0);
-    kart.stunTimer = Number(snapshot.stunTimer ?? 0);
-    kart.slowTimer = Number(snapshot.slowTimer ?? 0);
+    kart.boostTimer = 0;
+    kart.coinCount = 0;
+    kart.heldItem = null;
+    kart.pendingItem = null;
+    kart.itemRouletteTimer = 0;
+    kart.itemUseCooldown = 0;
+    kart.aiItemDelay = 0;
+    kart.invincibleTimer = 0;
+    kart.stunTimer = 0;
+    kart.slowTimer = 0;
     kart.visualScale = Number(snapshot.visualScale ?? 1);
-    kart.slipstreamCharge = Number(snapshot.slipstreamCharge ?? 0);
-    kart.jumpTimer = Number(snapshot.jumpTimer ?? 0);
-    kart.jumpDuration = Number(snapshot.jumpDuration ?? 0);
+    kart.slipstreamCharge = 0;
+    kart.jumpTimer = 0;
+    kart.jumpDuration = 0;
   }
 
   snapshotItem(item) {
@@ -538,59 +536,16 @@ export class Game {
     kart.syncMesh(0);
   }
 
-  applyRocketStart(playerInput, countdownBefore) {
-    if (playerInput.throttle > 0 && countdownBefore <= 1.05) {
-      this.player.boostTimer = Math.max(this.player.boostTimer, 1.25);
-      this.player.collisionImpulse = Math.max(this.player.collisionImpulse, 0.65);
-    } else if (playerInput.throttle > 0) {
-      this.player.stunTimer = Math.max(this.player.stunTimer, 0.28);
-    }
-
-    if (this.multiplayerMode === 'multiplayer') return;
-    for (const ai of this.aiKarts) {
-      const roll = Math.sin(ai.aiIndex * 8.13 + performance.now() * 0.001);
-      if (roll > -0.15) {
-        ai.boostTimer = Math.max(ai.boostTimer, roll > 0.65 ? 1.18 : 0.58);
-      }
+  applyRocketStart() {
+    for (const kart of this.getActiveKarts()) {
+      kart.boostTimer = 0;
     }
   }
 
-  applySlipstream(dt, raceRunning) {
-    const raceKarts = this.getActiveKarts();
-    if (!raceRunning) {
-      for (const kart of raceKarts) kart.slipstreamCharge = 0;
-      return;
-    }
-
-    for (const kart of raceKarts) {
-      if (kart.stunTimer > 0 || kart.currentSpeed < 12) {
-        kart.slipstreamCharge = Math.max(0, kart.slipstreamCharge - dt * 1.4);
-        continue;
-      }
-
-      kart.getForwardVector(slipForward);
-      let inDraft = false;
-      for (const other of raceKarts) {
-        if (other.id === kart.id) continue;
-        slipRelative.copy(other.position).sub(kart.position).setY(0);
-        const forwardDistance = slipRelative.dot(slipForward);
-        if (forwardDistance < 5 || forwardDistance > 24) continue;
-        slipLateral.copy(slipRelative).addScaledVector(slipForward, -forwardDistance);
-        if (slipLateral.lengthSq() > 15.2) continue;
-        inDraft = true;
-        break;
-      }
-
-      if (inDraft) {
-        kart.slipstreamCharge += dt;
-        if (kart.slipstreamCharge > 1.18) {
-          kart.boostTimer = Math.max(kart.boostTimer, 0.72);
-          kart.collisionImpulse = Math.max(kart.collisionImpulse, 0.34);
-          kart.slipstreamCharge = 0;
-        }
-      } else {
-        kart.slipstreamCharge = Math.max(0, kart.slipstreamCharge - dt * 0.9);
-      }
+  applySlipstream() {
+    for (const kart of this.getActiveKarts()) {
+      kart.slipstreamCharge = 0;
+      kart.boostTimer = 0;
     }
   }
 
@@ -821,9 +776,9 @@ export class Game {
     }
     kart.currentSpeed = speed;
     kart.steeringAngle = Number(state.steering ?? 0);
-    kart.boostTimer = Math.max(kart.boostTimer, Number(state.boost ?? 0) > 0 ? 0.12 : 0);
+    kart.boostTimer = 0;
     kart.driftCharge = Number(state.drift ?? 0);
-    kart.coinCount = Number(state.coins ?? 0);
+    kart.coinCount = 0;
   }
 
   startMultiplayerRace(grid, startAt) {
@@ -939,9 +894,9 @@ export class Game {
     entry.kart.networkTarget.yaw = state.yaw;
     entry.kart.currentSpeed = state.speed;
     entry.kart.steeringAngle = state.steering;
-    entry.kart.boostTimer = Math.max(entry.kart.boostTimer, state.boost > 0 ? 0.12 : 0);
+    entry.kart.boostTimer = 0;
     entry.kart.driftCharge = state.drift;
-    entry.kart.coinCount = state.coins;
+    entry.kart.coinCount = 0;
   }
 
   syncRemoteKarts(dt) {
@@ -982,9 +937,9 @@ export class Game {
       yaw: this.player.yaw,
       speed: this.player.currentSpeed,
       steering: this.player.steeringAngle,
-      boost: this.player.boostTimer,
+      boost: 0,
       drift: this.player.driftCharge,
-      coins: this.player.coinCount,
+      coins: 0,
     });
   }
 }

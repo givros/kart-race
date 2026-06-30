@@ -40,15 +40,12 @@ export class KartPhysics {
         kart.driftCharge + dt * (0.65 + absForwardSpeed / 34 + Math.abs(kart.steeringAngle) * 0.9),
       );
     } else {
-      if (kart.wasDrifting && kart.driftCharge > 0.55) {
-        kart.boostTimer = Math.max(kart.boostTimer, kart.driftCharge > 1.35 ? 1.0 : 0.48);
-      }
       kart.wasDrifting = false;
       kart.driftDirection = 0;
       kart.driftCharge = Math.max(0, kart.driftCharge - dt * 2.8);
     }
 
-    kart.boostTimer = Math.max(0, kart.boostTimer - dt);
+    kart.boostTimer = 0;
 
     const turnSlip = clamp(Math.abs(kart.steeringAngle) * absForwardSpeed / 42, 0, 0.7);
     const driftGripScale = wantsDrift ? 0.42 : 1.1 - turnSlip * 0.28;
@@ -65,20 +62,13 @@ export class KartPhysics {
     if (brake > 0) {
       force -= forwardSpeed > 1.2 ? kart.brakeForce * brake : kart.reverseForce * brake;
     }
-    if (kart.boostTimer > 0) {
-      force += kart.boostPower * 1.45;
-    }
-
     kart.velocity.addScaledVector(forward, force * dt);
 
-    const coinBonus = (kart.coinCount ?? 0) * 0.42;
     const statusSpeedFactor = slowed ? 0.64 : 1;
     const invincibleBonus = kart.invincibleTimer > 0 ? 5 : 0;
     const maxSpeed = (
       kart.maxSpeed +
-      coinBonus +
-      invincibleBonus +
-      (kart.boostTimer > 0 ? 16 : 0)
+      invincibleBonus
     ) * surface.speedFactor * statusSpeedFactor;
     const newForwardSpeed = kart.velocity.dot(forward);
     if (newForwardSpeed > maxSpeed) {
@@ -87,7 +77,7 @@ export class KartPhysics {
       kart.velocity.addScaledVector(forward, -11 - newForwardSpeed);
     }
 
-    const coastingDrag = throttle > 0 || kart.boostTimer > 0 ? 0 : 0.16;
+    const coastingDrag = throttle > 0 ? 0 : 0.16;
     const drag = 0.055 + surface.drag * 0.55 + coastingDrag + (wantsDrift ? 0.08 : 0) + (stunned ? 0.8 : 0);
     kart.velocity.multiplyScalar(Math.max(0, 1 - drag * dt));
 
@@ -118,13 +108,8 @@ export class KartPhysics {
       kart.collisionImpulse = Math.max(kart.collisionImpulse, impact);
     }
 
-    const hazard = typeof track.getFallHazard === 'function'
-      ? track.getFallHazard(kart.position)
-      : null;
-    if (hazard && (kart.jumpTimer ?? 0) <= 0.04 && kart.invincibleTimer <= 0) {
-      this.respawnKart(kart, track, hazard);
-      kart.collisionImpulse = Math.max(kart.collisionImpulse, 1);
-    }
+    kart.jumpTimer = 0;
+    kart.jumpDuration = 0;
 
     const moved = previous.distanceTo(kart.position);
     kart.distanceDriven += moved;
@@ -158,7 +143,7 @@ export class KartPhysics {
     kart.velocity.copy(wallTangent).addScaledVector(normal, -inwardBounce);
     kart.yaw += side * Math.sign(tangentSpeed || 1) * clamp(incomingSpeed * 0.012 + overshoot * 0.025, 0.035, 0.24);
     kart.driftCharge = Math.max(0, kart.driftCharge - 0.55);
-    kart.boostTimer = Math.min(kart.boostTimer, 0.18);
+    kart.boostTimer = 0;
 
     return clamp((incomingSpeed + overshoot * 2) / 24, 0.1, 1);
   }

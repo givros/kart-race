@@ -186,9 +186,11 @@ function distanceSq2D(a, b) {
 }
 
 export class ItemSystem {
-  constructor(scene, track) {
+  constructor(scene, track, options = {}) {
     this.scene = scene;
     this.track = track;
+    this.enabled = options.enabled ?? true;
+    this.populate = options.populate ?? this.enabled;
     this.random = makeSeededRandom(9001);
     this.itemBoxes = [];
     this.coins = [];
@@ -200,7 +202,7 @@ export class ItemSystem {
     this.events = [];
     this.eventId = 0;
 
-    this.materials = {
+    this.materials = this.populate ? {
       itemBox: new THREE.MeshStandardMaterial({
         map: makeItemFaceTexture(),
         emissive: 0x2abfff,
@@ -250,12 +252,14 @@ export class ItemSystem {
       mine: new THREE.MeshStandardMaterial({ color: 0x1f252a, emissive: 0x6fe26f, emissiveIntensity: 0.35, flatShading: true }),
       pulse: new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.62 }),
       leaderDrone: new THREE.MeshStandardMaterial({ color: 0x3fd8ff, emissive: 0x1a92ff, emissiveIntensity: 0.9, flatShading: true }),
-    };
+    } : {};
 
-    this.createItemBoxes();
-    this.createCoins();
-    this.createBoostPads();
-    this.createTrickRamps();
+    if (this.populate) {
+      this.createItemBoxes();
+      this.createCoins();
+      this.createBoostPads();
+      this.createTrickRamps();
+    }
   }
 
   createItem(type, uses = null) {
@@ -426,19 +430,25 @@ export class ItemSystem {
       kart.pendingItem = null;
       kart.itemRouletteTimer = 0;
       kart.itemUseCooldown = 0;
-      kart.aiItemDelay = randomRange(this.random, 0.7, 2.2);
+      kart.aiItemDelay = this.enabled ? randomRange(this.random, 0.7, 2.2) : 0;
       kart.coinCount = 0;
       kart.invincibleTimer = 0;
       kart.stunTimer = 0;
       kart.slowTimer = 0;
       kart.visualScale = 1;
       kart.slipstreamCharge = 0;
+      kart.boostTimer = 0;
       kart.jumpTimer = 0;
       kart.jumpDuration = 0;
     }
   }
 
   update(dt, karts, raceManager, playerWantsItem) {
+    if (!this.enabled) {
+      this.clearDisabledKartState(karts);
+      return;
+    }
+
     this.updateKartTimers(karts, dt);
     this.animatePickups(dt);
 
@@ -453,6 +463,25 @@ export class ItemSystem {
     this.updateProjectiles(karts, raceManager, dt);
     this.updateTraps(karts, dt);
     this.updateEffects(dt);
+  }
+
+  clearDisabledKartState(karts) {
+    for (const kart of karts) {
+      kart.heldItem = null;
+      kart.pendingItem = null;
+      kart.itemRouletteTimer = 0;
+      kart.itemUseCooldown = 0;
+      kart.aiItemDelay = 0;
+      kart.coinCount = 0;
+      kart.invincibleTimer = 0;
+      kart.stunTimer = 0;
+      kart.slowTimer = 0;
+      kart.visualScale = 1;
+      kart.slipstreamCharge = 0;
+      kart.boostTimer = 0;
+      kart.jumpTimer = 0;
+      kart.jumpDuration = 0;
+    }
   }
 
   updateKartTimers(karts, dt) {
@@ -953,6 +982,20 @@ export class ItemSystem {
   }
 
   getHUDState(playerKart) {
+    if (!this.enabled) {
+      return {
+        itemLabel: 'Empty',
+        itemShort: '-',
+        itemIcon: '-',
+        itemColor: '#6f7b84',
+        itemHint: '',
+        itemVerb: '',
+        itemEffect: '',
+        itemUses: 0,
+        itemType: 'empty',
+      };
+    }
+
     if (playerKart.itemRouletteTimer > 0) {
       return {
         itemLabel: 'Rolling',

@@ -41,14 +41,9 @@ export class TrackDecor {
       pineLight: new THREE.MeshStandardMaterial({ color: 0x2e8050, roughness: 0.86, flatShading: true }),
     };
 
-    this.addCircuitEdgeRails();
-    this.addSafetyBarriers();
-    this.addTireWalls();
-    this.addSignsAndCones();
     this.addBiomeLandmarks();
     this.addFinishArena();
     this.addKenneyAssetPass();
-    this.addPitLane();
     this.addTrees();
     this.addLowPolyTerrainProps();
     this.addSpectatorArea();
@@ -201,7 +196,6 @@ export class TrackDecor {
     this.addDirtCanyonProps();
     this.addDesertProps();
     this.addForestSectionProps();
-    this.addShortcutGroundMarkers();
   }
 
   addFinishArena() {
@@ -337,11 +331,9 @@ export class TrackDecor {
   }
 
   addKenneyAssetPass() {
-    this.addKenneyRoadEquipment();
     this.addKenneyCityDistrict();
     this.addKenneySnowVillage();
     this.addKenneyForestSuburb();
-    this.addKenneyPaddockVehicles();
     this.addKenneySurvivalDecor();
   }
 

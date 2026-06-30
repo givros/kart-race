@@ -130,12 +130,7 @@ export class Track {
       { name: 'Forest trail', start: 0.805, end: 0.858, side: 1, inner: this.halfWidth + 0.7, outer: this.halfWidth + 14.5, speed: 0.93, grip: 0.86, drag: 0.33, color: 0x5f8147 },
     ];
 
-    this.jumpHazards = [
-      { name: 'City canal gap', start: 0.255, end: 0.266, side: 0, halfWidth: this.halfWidth - 2 },
-      { name: 'Snow ravine', start: 0.445, end: 0.457, side: 0, halfWidth: this.halfWidth - 1.5 },
-      { name: 'Canyon washout', start: 0.56, end: 0.573, side: 0, halfWidth: this.halfWidth - 2 },
-      { name: 'Dune canyon', start: 0.765, end: 0.778, side: 0, halfWidth: this.halfWidth - 1.5 },
-    ];
+    this.jumpHazards = [];
 
     this.bounds.setFromPoints(this.controlPoints);
     this.bounds.getCenter(this.center);
@@ -152,7 +147,6 @@ export class Track {
     this.generateSamples();
     this.createTrackMeshes();
     this.createShortcuts();
-    this.createJumpHazards();
     this.createStartFinishGantry();
     this.createVisibleStartGate();
     this.createStartGridMarkers();
@@ -442,101 +436,54 @@ export class Track {
   }
 
   createJumpHazards() {
-    const gapMat = new THREE.MeshStandardMaterial({
-      color: 0x111820,
-      emissive: 0x07131d,
-      emissiveIntensity: 0.28,
-      roughness: 0.86,
-      side: THREE.DoubleSide,
-      flatShading: true,
-    });
-    const warningMat = new THREE.MeshStandardMaterial({
-      color: 0xffca3a,
-      roughness: 0.65,
-      flatShading: true,
-    });
-    const darkMat = new THREE.MeshStandardMaterial({
-      color: 0x22262b,
-      roughness: 0.72,
-      flatShading: true,
-    });
-
-    for (const hazard of this.jumpHazards) {
-      const gap = new THREE.Mesh(
-        this.createSegmentStripGeometry(
-          hazard.start,
-          hazard.end,
-          -hazard.halfWidth,
-          hazard.halfWidth,
-          0.075,
-        ),
-        gapMat,
-      );
-      gap.receiveShadow = true;
-      this.scene.add(gap);
-
-      for (const p of [hazard.start, hazard.end]) {
-        const frame = this.getFrameAtProgress(p);
-        const plank = new THREE.Mesh(
-          new THREE.BoxGeometry(hazard.halfWidth * 2, 0.18, 0.52),
-          warningMat,
-        );
-        plank.position.copy(frame.point);
-        plank.position.y = 0.18;
-        plank.rotation.y = yawFromDirection(frame.tangent) + Math.PI / 2;
-        plank.castShadow = true;
-        plank.receiveShadow = true;
-        this.scene.add(plank);
-
-        for (const side of [-1, 1]) {
-          const block = new THREE.Mesh(
-            new THREE.BoxGeometry(1.2, 0.8, 1.2),
-            darkMat,
-          );
-          block.position
-            .copy(frame.point)
-            .addScaledVector(frame.normal, side * (hazard.halfWidth + 1.4));
-          block.position.y = 0.4;
-          block.rotation.y = yawFromDirection(frame.tangent);
-          block.castShadow = true;
-          block.receiveShadow = true;
-          this.scene.add(block);
-        }
-      }
-    }
+    return;
   }
 
   createCurbs() {
-    const red = new THREE.MeshStandardMaterial({ color: 0xd62929, roughness: 0.72, flatShading: true });
-    const white = new THREE.MeshStandardMaterial({ color: 0xf2f2e9, roughness: 0.7, flatShading: true });
-    const curbGeometry = new THREE.BoxGeometry(1.24, 0.12, 4.6);
-    const ranges = [
-      [0.12, 0.245],
-      [0.31, 0.445],
-      [0.49, 0.645],
-      [0.73, 0.895],
-    ];
+    const topMat = new THREE.MeshStandardMaterial({
+      color: 0xf7f6ee,
+      roughness: 0.76,
+      side: THREE.DoubleSide,
+      flatShading: true,
+    });
+    const outerLipMat = new THREE.MeshStandardMaterial({
+      color: 0xb9c3c4,
+      roughness: 0.82,
+      side: THREE.DoubleSide,
+      flatShading: true,
+    });
 
-    let blockIndex = 0;
-    for (const [start, end] of ranges) {
-      for (let p = start; p < end; p += 0.0135) {
-        for (const side of [-1, 1]) {
-          const frame = this.getFrameAtProgress(p);
-          const mesh = new THREE.Mesh(
-            curbGeometry,
-            blockIndex % 2 === 0 ? red : white,
-          );
-          mesh.position
-            .copy(frame.point)
-            .addScaledVector(frame.normal, side * (this.halfWidth + 0.48));
-          mesh.position.y = 0.08;
-          mesh.rotation.y = yawFromDirection(frame.tangent);
-          mesh.castShadow = true;
-          mesh.receiveShadow = true;
-          this.scene.add(mesh);
-        }
-        blockIndex += 1;
-      }
+    for (const side of [-1, 1]) {
+      const inner = side * (this.driveableHalfWidth + 0.12);
+      const outer = side * (this.halfWidth + 1.35);
+      const lipOuter = side * (this.halfWidth + 1.62);
+      const curb = new THREE.Mesh(
+        this.createSegmentStripGeometry(
+          0,
+          1,
+          Math.min(inner, outer),
+          Math.max(inner, outer),
+          0.105,
+        ),
+        topMat,
+      );
+      curb.name = side > 0 ? 'Continuous_Left_Circuit_Edge' : 'Continuous_Right_Circuit_Edge';
+      curb.receiveShadow = true;
+      this.scene.add(curb);
+
+      const lip = new THREE.Mesh(
+        this.createSegmentStripGeometry(
+          0,
+          1,
+          Math.min(outer, lipOuter),
+          Math.max(outer, lipOuter),
+          0.082,
+        ),
+        outerLipMat,
+      );
+      lip.name = side > 0 ? 'Continuous_Left_Circuit_Edge_Lip' : 'Continuous_Right_Circuit_Edge_Lip';
+      lip.receiveShadow = true;
+      this.scene.add(lip);
     }
   }
 
@@ -1016,15 +963,6 @@ export class Track {
   }
 
   getFallHazard(position) {
-    const info = this.getRaceInfo(position);
-    if (info.onShortcut) return null;
-
-    for (const hazard of this.jumpHazards) {
-      if (!this.progressInRange(info.progress, hazard.start, hazard.end)) continue;
-      if (Math.abs(info.lateral) <= hazard.halfWidth) {
-        return { ...hazard, info };
-      }
-    }
     return null;
   }
 

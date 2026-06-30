@@ -1055,11 +1055,8 @@ export class Kart {
 
   syncMesh(dt) {
     this.mesh.position.copy(this.position);
-    if (this.jumpTimer > 0 && this.jumpDuration > 0) {
-      this.jumpTimer = Math.max(0, this.jumpTimer - dt);
-      const t = 1 - this.jumpTimer / this.jumpDuration;
-      this.mesh.position.y += Math.sin(t * Math.PI) * 1.15;
-    }
+    this.jumpTimer = 0;
+    this.jumpDuration = 0;
     this.mesh.rotation.y = this.yaw;
     this.mesh.scale.setScalar(this.visualScale ?? 1);
 
