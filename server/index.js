@@ -14,6 +14,8 @@ const kenneyAssetsDir = fs.existsSync(publicKenneyAssetsDir)
   : localKenneyAssetsDir;
 const port = Number(process.env.PORT ?? 8787);
 const maxPlayers = 15;
+const configuredRaceStartDelayMs = Number(process.env.RACE_START_DELAY_MS ?? 3600);
+const raceStartDelayMs = Math.max(3300, Number.isFinite(configuredRaceStartDelayMs) ? configuredRaceStartDelayMs : 3600);
 
 const lobbies = new Map();
 const sockets = new Map();
@@ -87,6 +89,8 @@ function lobbySnapshot(lobby) {
     code: lobby.code,
     hostId: lobby.hostId,
     state: lobby.state,
+    raceStartAt: lobby.raceStartAt ?? null,
+    serverNow: Date.now(),
     maxPlayers,
     readyCount: [...lobby.players.values()].filter((player) => player.connected && player.ready).length,
     players: [...lobby.players.values()].map((player, index) => ({
@@ -105,6 +109,46 @@ function lobbySnapshot(lobby) {
 
 function broadcastLobby(lobby) {
   broadcast(lobby, 'lobby:update', { lobby: lobbySnapshot(lobby) });
+}
+
+function buildRaceResults(lobby) {
+  return [...lobby.players.values()]
+    .map((player) => ({
+      id: player.id,
+      name: player.name,
+      color: player.color,
+      accent: player.accent,
+      connected: player.connected,
+      finishTime: Number(player.lastState?.finishTime ?? 0),
+      raceTime: Number(player.lastState?.raceTime ?? 0),
+      progress: Number(player.lastState?.progress ?? 0),
+      finished: Boolean(player.lastState?.finished),
+    }))
+    .sort((a, b) => {
+      if (a.finished && b.finished) return a.finishTime - b.finishTime;
+      if (a.finished !== b.finished) return a.finished ? -1 : 1;
+      return b.progress - a.progress;
+    })
+    .map((entry, index) => ({
+      ...entry,
+      rank: index + 1,
+    }));
+}
+
+function maybeCompleteRace(lobby) {
+  if (!lobby || lobby.state !== 'running' || lobby.resultsSent) return;
+  const connectedPlayers = [...lobby.players.values()].filter((player) => player.connected);
+  if (!connectedPlayers.length) return;
+  const allFinished = connectedPlayers.every((player) => player.lastState?.finished);
+  if (!allFinished) return;
+  lobby.state = 'finished';
+  lobby.resultsSent = true;
+  const snapshot = lobbySnapshot(lobby);
+  broadcast(lobby, 'race:complete', {
+    lobby: snapshot,
+    results: buildRaceResults(lobby),
+  });
+  broadcastLobby(lobby);
 }
 
 function findPlayerBySession(lobby, sessionToken) {
@@ -143,6 +187,8 @@ function joinLobby(ws, code, name, create = false, requestedToken = null) {
       state: 'lobby',
       players: new Map(),
       createdAt: Date.now(),
+      raceStartAt: null,
+      resultsSent: false,
     };
     lobbies.set(code, lobby);
   }
@@ -230,7 +276,10 @@ function handleStart(ws) {
   }
 
   lobby.state = 'countdown';
-  const startAt = Date.now() + 3600;
+  lobby.resultsSent = false;
+  const now = Date.now();
+  const startAt = now + raceStartDelayMs;
+  lobby.raceStartAt = startAt;
   const grid = [...lobby.players.values()].map((player, index) => ({
     id: player.id,
     gridIndex: index,
@@ -240,15 +289,17 @@ function handleStart(ws) {
   }));
 
   broadcastLobby(lobby);
-  broadcast(lobby, 'race:start', { startAt, grid });
+  broadcast(lobby, 'race:start', { startAt, serverNow: now, grid });
 
   setTimeout(() => {
     const current = lobbies.get(lobby.code);
     if (!current || current.state !== 'countdown') return;
     current.state = 'running';
+    const startedAt = Date.now();
+    current.raceStartAt = startedAt;
     broadcastLobby(current);
-    broadcast(current, 'race:go', { startedAt: Date.now() });
-  }, 3600);
+    broadcast(current, 'race:go', { startedAt, serverNow: startedAt });
+  }, raceStartDelayMs);
 }
 
 function handleEndLobby(ws) {
@@ -270,6 +321,8 @@ function handleEndRace(ws) {
   if (!lobby || lobby.hostId !== session.playerId || lobby.state === 'lobby') return;
 
   lobby.state = 'lobby';
+  lobby.raceStartAt = null;
+  lobby.resultsSent = false;
   for (const player of lobby.players.values()) {
     player.ready = false;
     player.lastState = null;
@@ -297,9 +350,17 @@ function handleKartState(ws, state) {
     boost: Number(state.boost) || 0,
     drift: Number(state.drift) || 0,
     coins: Number(state.coins) || 0,
+    stun: Number(state.stun) || 0,
+    slow: Number(state.slow) || 0,
+    lap: Number(state.lap) || 1,
+    progress: Number(state.progress) || 0,
+    finished: Boolean(state.finished),
+    finishTime: Number(state.finishTime) || 0,
+    raceTime: Number(state.raceTime) || 0,
     t: Date.now(),
   };
   broadcast(lobby, 'kart:state', { state: player.lastState }, player.id);
+  maybeCompleteRace(lobby);
 }
 
 function handleMessage(ws, raw) {
@@ -369,7 +430,8 @@ const server = http.createServer((req, res) => {
   const urlPath = decodeURIComponent(new URL(req.url, `http://${req.headers.host}`).pathname);
 
   if (urlPath.startsWith('/assets-kenny/')) {
-    const assetPath = path.normalize(path.join(rootDir, urlPath));
+    const relativeAssetPath = urlPath.slice('/assets-kenny/'.length);
+    const assetPath = path.normalize(path.join(kenneyAssetsDir, relativeAssetPath));
     if (!assetPath.startsWith(kenneyAssetsDir) || !fs.existsSync(assetPath) || fs.statSync(assetPath).isDirectory()) {
       res.writeHead(404, localAccessHeaders({ 'content-type': 'text/plain; charset=utf-8' }));
       res.end('Asset not found.');

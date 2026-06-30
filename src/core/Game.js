@@ -14,6 +14,9 @@ import { LobbyUI } from '../ui/LobbyUI.js';
 import { MultiplayerClient } from '../network/MultiplayerClient.js';
 import { angleDifference } from '../utils/math.js';
 
+const NETWORK_INTERPOLATION_DELAY = 0.11;
+const NETWORK_SEND_INTERVAL = 1 / 20;
+
 const AI_COLORS = [
   [0x2f80ed, 0xf5f5f0],
   [0xeb5757, 0x20242a],
@@ -24,8 +27,8 @@ const AI_COLORS = [
   [0xbb6bd9, 0xfff2a8],
 ];
 
-const RACE_SAVE_KEY = 'kartingActiveRaceStateV2';
-const RACE_SAVE_VERSION = 2;
+const RACE_SAVE_KEY = 'kartingActiveRaceStateV3';
+const RACE_SAVE_VERSION = 3;
 const RACE_SAVE_INTERVAL = 0.35;
 const RACE_SAVE_MAX_AGE = 1000 * 60 * 60 * 6;
 const WRONG_WAY_RESET_SECONDS = 5;
@@ -47,8 +50,12 @@ export class Game {
     this.karts = [this.player, ...this.aiKarts];
     this.raceManager = new RaceManager(this.track, 2);
     this.itemSystem = new ItemSystem(this.sceneManager.scene, this.track, {
-      enabled: false,
-      populate: false,
+      enabled: true,
+      populate: true,
+      itemBoxes: true,
+      coins: true,
+      boostPads: false,
+      trickRamps: false,
     });
     this.cameraController = new CameraController(this.sceneManager.camera, this.track);
     this.hud = new HUD({
@@ -80,6 +87,13 @@ export class Game {
       remaining: WRONG_WAY_RESET_SECONDS,
       progress: 0,
     };
+    this.finalResults = null;
+    this.fpsStats = {
+      current: 0,
+      average: 0,
+      min: Infinity,
+      samples: [],
+    };
 
     for (const kart of this.karts) {
       this.sceneManager.scene.add(kart.mesh);
@@ -108,11 +122,23 @@ export class Game {
 
   loop(time) {
     if (!this.running) return;
-    const dt = Math.min((time - this.lastTime) / 1000, 0.05);
+    const frameDt = Math.max(0, (time - this.lastTime) / 1000);
+    const dt = Math.min(frameDt, 0.05);
     this.lastTime = time;
+    this.updateFpsStats(frameDt);
     this.update(dt);
     this.sceneManager.render();
     requestAnimationFrame((next) => this.loop(next));
+  }
+
+  updateFpsStats(dt) {
+    if (dt <= 0 || dt > 1) return;
+    const fps = 1 / dt;
+    this.fpsStats.current = fps;
+    this.fpsStats.samples.push(fps);
+    if (this.fpsStats.samples.length > 120) this.fpsStats.samples.shift();
+    this.fpsStats.average = this.fpsStats.samples.reduce((sum, value) => sum + value, 0) / this.fpsStats.samples.length;
+    this.fpsStats.min = Math.min(this.fpsStats.min, fps);
   }
 
   update(dt) {
@@ -134,7 +160,6 @@ export class Game {
       this.input.itemUseRequested = false;
     }
     const wasCountdown = this.raceManager.state === 'countdown';
-    const countdownBefore = this.raceManager.countdownRemaining;
 
     this.raceManager.tickPhase(dt);
     const raceRunning = this.raceManager.isRunning();
@@ -159,6 +184,7 @@ export class Game {
         totalKarts: this.getActiveKarts().length,
         wrongWay: this.wrongWayHud,
         raceControls: this.getRaceControls(),
+        finalResults: this.finalResults,
       });
       this.sendLocalKartState(dt);
       this.persistRaceState(dt);
@@ -203,6 +229,7 @@ export class Game {
       totalKarts: raceKarts.length,
       wrongWay: this.wrongWayHud,
       raceControls: this.getRaceControls(),
+      finalResults: this.finalResults,
     });
     this.sendLocalKartState(dt);
     this.persistRaceState(dt);
@@ -210,6 +237,7 @@ export class Game {
 
   resetRace({ clearSavedRace = true } = {}) {
     if (clearSavedRace) this.clearSavedRaceState();
+    this.finalResults = null;
     this.startGridLocks.length = 0;
     const raceKarts = this.getActiveKarts();
     for (let i = 0; i < raceKarts.length; i += 1) {
@@ -344,6 +372,7 @@ export class Game {
       totalKarts: activeKarts.length,
       wrongWay: this.wrongWayHud,
       raceControls: this.getRaceControls(),
+      finalResults: this.finalResults,
     });
     this.saveRaceState(true);
     return true;
@@ -362,18 +391,18 @@ export class Game {
       driftCharge: kart.driftCharge,
       driftDirection: kart.driftDirection,
       wasDrifting: kart.wasDrifting,
-      boostTimer: 0,
-      coinCount: 0,
-      heldItem: null,
-      pendingItem: null,
-      itemRouletteTimer: 0,
-      itemUseCooldown: 0,
+      boostTimer: kart.boostTimer,
+      coinCount: kart.coinCount,
+      heldItem: this.snapshotItem(kart.heldItem),
+      pendingItem: this.snapshotItem(kart.pendingItem),
+      itemRouletteTimer: kart.itemRouletteTimer,
+      itemUseCooldown: kart.itemUseCooldown,
       aiItemDelay: kart.aiItemDelay,
-      invincibleTimer: 0,
-      stunTimer: 0,
-      slowTimer: 0,
+      invincibleTimer: kart.invincibleTimer,
+      stunTimer: kart.stunTimer,
+      slowTimer: kart.slowTimer,
       visualScale: kart.visualScale,
-      slipstreamCharge: 0,
+      slipstreamCharge: kart.slipstreamCharge,
       jumpTimer: 0,
       jumpDuration: 0,
     };
@@ -400,18 +429,18 @@ export class Game {
     kart.driftCharge = Number(snapshot.driftCharge ?? 0);
     kart.driftDirection = Number(snapshot.driftDirection ?? 0);
     kart.wasDrifting = Boolean(snapshot.wasDrifting);
-    kart.boostTimer = 0;
-    kart.coinCount = 0;
-    kart.heldItem = null;
-    kart.pendingItem = null;
+    kart.boostTimer = Number(snapshot.boostTimer ?? 0);
+    kart.coinCount = Number(snapshot.coinCount ?? 0);
+    kart.heldItem = this.restoreItem(snapshot.heldItem);
+    kart.pendingItem = this.restoreItem(snapshot.pendingItem);
     kart.itemRouletteTimer = 0;
-    kart.itemUseCooldown = 0;
-    kart.aiItemDelay = 0;
-    kart.invincibleTimer = 0;
-    kart.stunTimer = 0;
-    kart.slowTimer = 0;
+    kart.itemUseCooldown = Number(snapshot.itemUseCooldown ?? 0);
+    kart.aiItemDelay = Number(snapshot.aiItemDelay ?? 0);
+    kart.invincibleTimer = Number(snapshot.invincibleTimer ?? 0);
+    kart.stunTimer = Number(snapshot.stunTimer ?? 0);
+    kart.slowTimer = Number(snapshot.slowTimer ?? 0);
     kart.visualScale = Number(snapshot.visualScale ?? 1);
-    kart.slipstreamCharge = 0;
+    kart.slipstreamCharge = Number(snapshot.slipstreamCharge ?? 0);
     kart.jumpTimer = 0;
     kart.jumpDuration = 0;
   }
@@ -537,15 +566,12 @@ export class Game {
   }
 
   applyRocketStart() {
-    for (const kart of this.getActiveKarts()) {
-      kart.boostTimer = 0;
-    }
+    return;
   }
 
   applySlipstream() {
     for (const kart of this.getActiveKarts()) {
       kart.slipstreamCharge = 0;
-      kart.boostTimer = 0;
     }
   }
 
@@ -588,6 +614,12 @@ export class Game {
     this.multiplayer.addEventListener('raceStart', (event) => {
       this.startMultiplayerRace(event.detail.grid, event.detail.startAt);
     });
+    this.multiplayer.addEventListener('raceGo', (event) => {
+      this.handleRaceGo(event.detail.startedAt);
+    });
+    this.multiplayer.addEventListener('raceComplete', (event) => {
+      this.handleRaceComplete(event.detail.results ?? []);
+    });
     this.multiplayer.addEventListener('kartState', (event) => {
       this.applyRemoteKartState(event.detail.state);
     });
@@ -604,6 +636,7 @@ export class Game {
 
   startSoloMode() {
     this.multiplayerMode = 'solo';
+    this.finalResults = null;
     this.player.id = 'player';
     this.clearRemoteKarts();
     this.setAIMeshesVisible(true);
@@ -681,12 +714,14 @@ export class Game {
   handleRaceEnded(lobby) {
     if (!lobby) return;
     this.multiplayerMode = 'multiplayer';
+    this.finalResults = null;
     this.clearSavedRaceState();
     this.enterMultiplayerLobby(lobby);
     this.lobbyUI.setError('Course terminee. Retour lobby.');
   }
 
   enterMultiplayerLobby(lobby) {
+    this.finalResults = null;
     this.applyLocalPlayerLivery(lobby.players ?? []);
     this.syncRemotePlayers(lobby.players ?? []);
     this.positionLobbyKarts(lobby.players ?? []);
@@ -740,7 +775,15 @@ export class Game {
 
     this.raceManager.reset(orderedKarts);
     this.raceManager.state = lobby.state === 'running' ? 'running' : 'countdown';
-    this.raceManager.countdownRemaining = lobby.state === 'countdown' ? 0.35 : 0;
+    const raceStartAt = Number(lobby.raceStartAt);
+    if (lobby.state === 'countdown' && Number.isFinite(raceStartAt) && raceStartAt > 0) {
+      this.raceManager.countdownRemaining = Math.max(0.05, (raceStartAt - this.multiplayer.getServerNow()) / 1000);
+    } else {
+      this.raceManager.countdownRemaining = lobby.state === 'countdown' ? 3 : 0;
+    }
+    if (lobby.state === 'running' && Number.isFinite(raceStartAt) && raceStartAt > 0) {
+      this.raceManager.timer = Math.max(0, (this.multiplayer.getServerNow() - raceStartAt) / 1000);
+    }
     this.raceManager.goFlash = 0;
     this.itemSystem.reset(orderedKarts);
     this.lobbyUI.showRaceBadge();
@@ -776,12 +819,15 @@ export class Game {
     }
     kart.currentSpeed = speed;
     kart.steeringAngle = Number(state.steering ?? 0);
-    kart.boostTimer = 0;
+    kart.boostTimer = Number(state.boost ?? 0);
     kart.driftCharge = Number(state.drift ?? 0);
-    kart.coinCount = 0;
+    kart.coinCount = Number(state.coins ?? 0);
+    kart.stunTimer = Number(state.stun ?? 0);
+    kart.slowTimer = Number(state.slow ?? 0);
   }
 
   startMultiplayerRace(grid, startAt) {
+    this.finalResults = null;
     this.multiplayerMode = 'multiplayer';
     this.setAIMeshesVisible(false);
     this.raceGrid = grid ?? [];
@@ -805,8 +851,30 @@ export class Game {
     }
 
     this.raceManager.reset(orderedKarts);
-    this.raceManager.countdownRemaining = Math.max(0.25, ((startAt ?? Date.now() + 3000) - Date.now()) / 1000);
+    const countdownMs = startAt == null
+      ? 3000
+      : startAt - this.multiplayer.getServerNow();
+    this.raceManager.countdownRemaining = Math.max(0.05, countdownMs / 1000);
     this.itemSystem.reset(orderedKarts);
+    this.lobbyUI.showRaceBadge();
+  }
+
+  handleRaceGo(startedAt = null) {
+    if (this.multiplayerMode !== 'multiplayer') return;
+    if (!['countdown', 'running'].includes(this.raceManager.state)) return;
+    this.raceManager.state = 'running';
+    this.raceManager.countdownRemaining = 0;
+    this.raceManager.goFlash = 0.9;
+    if (startedAt != null) {
+      const elapsed = Math.max(0, (this.multiplayer.getServerNow() - Number(startedAt)) / 1000);
+      this.raceManager.timer = elapsed;
+    }
+  }
+
+  handleRaceComplete(results = []) {
+    this.finalResults = results;
+    this.raceManager.state = 'finished';
+    this.raceManager.goFlash = 0;
     this.lobbyUI.showRaceBadge();
   }
 
@@ -816,7 +884,7 @@ export class Game {
       const ordered = lobbyPlayers
         .map((player) => this.getKartByNetworkId(player.id))
         .filter(Boolean);
-      return ordered.length ? ordered : [this.player, ...this.remoteKarts.values()];
+      return ordered.length ? ordered : [this.player, ...[...this.remoteKarts.values()].map((entry) => entry.kart)];
     }
     return [this.player, ...this.aiKarts];
   }
@@ -859,7 +927,7 @@ export class Game {
         yaw: kart.yaw,
       };
       this.sceneManager.scene.add(kart.mesh);
-      this.remoteKarts.set(player.id, { kart, lastSeen: performance.now() });
+      this.remoteKarts.set(player.id, { kart, lastSeen: performance.now(), samples: [] });
     }
 
     for (const id of this.remoteKarts.keys()) {
@@ -890,20 +958,56 @@ export class Game {
     const entry = this.remoteKarts.get(state.id);
     if (!entry) return;
     entry.lastSeen = performance.now();
-    entry.kart.networkTarget.position.set(state.x, state.y ?? 0.18, state.z);
-    entry.kart.networkTarget.yaw = state.yaw;
-    entry.kart.currentSpeed = state.speed;
-    entry.kart.steeringAngle = state.steering;
-    entry.kart.boostTimer = 0;
-    entry.kart.driftCharge = state.drift;
-    entry.kart.coinCount = 0;
+    const sample = {
+      time: performance.now(),
+      position: {
+        x: Number(state.x ?? entry.kart.position.x),
+        y: Number(state.y ?? 0.18),
+        z: Number(state.z ?? entry.kart.position.z),
+      },
+      yaw: Number(state.yaw ?? entry.kart.yaw),
+      speed: Number(state.speed ?? 0),
+      steering: Number(state.steering ?? 0),
+      boost: Number(state.boost ?? 0),
+      drift: Number(state.drift ?? 0),
+      coins: Number(state.coins ?? 0),
+      stun: Number(state.stun ?? 0),
+      slow: Number(state.slow ?? 0),
+    };
+    entry.samples.push(sample);
+    if (entry.samples.length > 10) entry.samples.splice(0, entry.samples.length - 10);
+    entry.kart.networkTarget.position.set(sample.position.x, sample.position.y, sample.position.z);
+    entry.kart.networkTarget.yaw = sample.yaw;
   }
 
   syncRemoteKarts(dt) {
-    for (const { kart } of this.remoteKarts.values()) {
+    const renderTime = performance.now() - NETWORK_INTERPOLATION_DELAY * 1000;
+    for (const entry of this.remoteKarts.values()) {
+      const { kart, samples } = entry;
       if (!kart.networkTarget) continue;
-      kart.position.lerp(kart.networkTarget.position, Math.min(1, dt * 12));
-      kart.yaw += angleDifference(kart.networkTarget.yaw, kart.yaw) * Math.min(1, dt * 12);
+      while (samples.length >= 2 && samples[1].time <= renderTime) samples.shift();
+      if (samples.length >= 2 && samples[0].time <= renderTime && samples[1].time >= renderTime) {
+        const previous = samples[0];
+        const next = samples[1];
+        const span = Math.max(1, next.time - previous.time);
+        const t = Math.min(1, Math.max(0, (renderTime - previous.time) / span));
+        kart.position.set(
+          previous.position.x + (next.position.x - previous.position.x) * t,
+          previous.position.y + (next.position.y - previous.position.y) * t,
+          previous.position.z + (next.position.z - previous.position.z) * t,
+        );
+        kart.yaw = previous.yaw + angleDifference(next.yaw, previous.yaw) * t;
+        kart.currentSpeed = previous.speed + (next.speed - previous.speed) * t;
+        kart.steeringAngle = previous.steering + (next.steering - previous.steering) * t;
+        kart.boostTimer = Math.max(previous.boost, next.boost);
+        kart.driftCharge = previous.drift + (next.drift - previous.drift) * t;
+        kart.coinCount = Math.round(previous.coins + (next.coins - previous.coins) * t);
+        kart.stunTimer = Math.max(previous.stun, next.stun);
+        kart.slowTimer = Math.max(previous.slow, next.slow);
+      } else {
+        kart.position.lerp(kart.networkTarget.position, Math.min(1, dt * 8));
+        kart.yaw += angleDifference(kart.networkTarget.yaw, kart.yaw) * Math.min(1, dt * 8);
+      }
       kart.velocity.set(0, 0, 0);
     }
   }
@@ -929,7 +1033,8 @@ export class Game {
     if (this.multiplayerMode !== 'multiplayer' || !this.multiplayer.lobby) return;
     this.networkSendTimer -= dt;
     if (this.networkSendTimer > 0) return;
-    this.networkSendTimer = 0.05;
+    this.networkSendTimer = NETWORK_SEND_INTERVAL;
+    const checkpointState = this.raceManager.getKartState(this.player.id);
     this.multiplayer.sendKartState({
       x: this.player.position.x,
       y: this.player.position.y,
@@ -937,9 +1042,16 @@ export class Game {
       yaw: this.player.yaw,
       speed: this.player.currentSpeed,
       steering: this.player.steeringAngle,
-      boost: 0,
+      boost: this.player.boostTimer,
       drift: this.player.driftCharge,
-      coins: 0,
+      coins: this.player.coinCount,
+      stun: this.player.stunTimer,
+      slow: this.player.slowTimer,
+      lap: checkpointState?.lap ?? 1,
+      progress: checkpointState?.raceProgress ?? 0,
+      finished: Boolean(checkpointState?.finished),
+      finishTime: Number(checkpointState?.finishTime ?? 0),
+      raceTime: this.raceManager.timer,
     });
   }
 }

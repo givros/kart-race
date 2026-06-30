@@ -96,7 +96,10 @@ export class RaceManager {
 
   getCountdownText() {
     if (this.state === 'countdown') {
-      return `${Math.max(1, Math.min(3, Math.ceil(this.countdownRemaining)))}`;
+      const remaining = Math.max(0, this.countdownRemaining);
+      if (remaining > 2) return '3';
+      if (remaining > 1) return '2';
+      return '1';
     }
     if (this.goFlash > 0) return 'GO';
     return '';

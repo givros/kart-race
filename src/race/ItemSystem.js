@@ -191,6 +191,10 @@ export class ItemSystem {
     this.track = track;
     this.enabled = options.enabled ?? true;
     this.populate = options.populate ?? this.enabled;
+    this.populateItemBoxes = options.itemBoxes ?? this.populate;
+    this.populateCoins = options.coins ?? this.populate;
+    this.populateBoostPads = options.boostPads ?? false;
+    this.populateTrickRamps = options.trickRamps ?? false;
     this.random = makeSeededRandom(9001);
     this.itemBoxes = [];
     this.coins = [];
@@ -254,12 +258,10 @@ export class ItemSystem {
       leaderDrone: new THREE.MeshStandardMaterial({ color: 0x3fd8ff, emissive: 0x1a92ff, emissiveIntensity: 0.9, flatShading: true }),
     } : {};
 
-    if (this.populate) {
-      this.createItemBoxes();
-      this.createCoins();
-      this.createBoostPads();
-      this.createTrickRamps();
-    }
+    if (this.populateItemBoxes) this.createItemBoxes();
+    if (this.populateCoins) this.createCoins();
+    if (this.populateBoostPads) this.createBoostPads();
+    if (this.populateTrickRamps) this.createTrickRamps();
   }
 
   createItem(type, uses = null) {

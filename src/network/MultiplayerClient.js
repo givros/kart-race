@@ -18,6 +18,7 @@ export class MultiplayerClient extends EventTarget {
     this.savedLobbyCode = window.localStorage.getItem('kartingLobbyCode') ?? '';
     this.savedName = window.localStorage.getItem('kartingPlayerName') ?? 'Player';
     this.restoring = false;
+    this.serverClockOffset = 0;
   }
 
   resolveWsUrl() {
@@ -91,6 +92,16 @@ export class MultiplayerClient extends EventTarget {
 
   emit(type, detail = {}) {
     this.dispatchEvent(new CustomEvent(type, { detail }));
+  }
+
+  noteServerNow(serverNow) {
+    const value = Number(serverNow);
+    if (!Number.isFinite(value) || value <= 0) return;
+    this.serverClockOffset = value - Date.now();
+  }
+
+  getServerNow() {
+    return Date.now() + this.serverClockOffset;
   }
 
   connect() {
@@ -290,6 +301,7 @@ export class MultiplayerClient extends EventTarget {
     }
 
     if (message.type === 'session:joined') {
+      this.noteServerNow(message.lobby?.serverNow);
       this.playerId = message.playerId;
       if (message.sessionToken) {
         this.sessionToken = message.sessionToken;
@@ -300,6 +312,7 @@ export class MultiplayerClient extends EventTarget {
       this.restoring = false;
       this.emit('joined', { playerId: this.playerId, lobby: this.lobby });
     } else if (message.type === 'lobby:update') {
+      this.noteServerNow(message.lobby?.serverNow);
       this.lobby = message.lobby;
       this.saveSession(this.lobby);
       this.emit('lobby', { lobby: this.lobby });
@@ -320,12 +333,22 @@ export class MultiplayerClient extends EventTarget {
       this.saveSession(this.lobby);
       this.emit('raceEnded', { lobby: this.lobby });
     } else if (message.type === 'race:start') {
+      this.noteServerNow(message.serverNow);
       this.emit('raceStart', {
         startAt: message.startAt,
+        serverNow: message.serverNow,
         grid: message.grid ?? [],
       });
     } else if (message.type === 'race:go') {
-      this.emit('raceGo', { startedAt: message.startedAt });
+      this.noteServerNow(message.serverNow);
+      this.emit('raceGo', { startedAt: message.startedAt, serverNow: message.serverNow });
+    } else if (message.type === 'race:complete') {
+      this.lobby = message.lobby ?? this.lobby;
+      if (this.lobby) this.saveSession(this.lobby);
+      this.emit('raceComplete', {
+        lobby: this.lobby,
+        results: message.results ?? [],
+      });
     } else if (message.type === 'kart:state') {
       this.emit('kartState', { state: message.state });
     } else if (message.type === 'player:left') {

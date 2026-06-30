@@ -114,8 +114,9 @@ export class HUD {
 
       <div class="hud-result" data-result hidden>
         <div class="result-panel">
-          <h1>Race Complete</h1>
+          <h1 data-result-title>Race Complete</h1>
           <p data-result-summary></p>
+          <ol class="result-ranking" data-result-ranking></ol>
           <button type="button" data-restart>Restart Race</button>
         </div>
       </div>
@@ -157,7 +158,9 @@ export class HUD {
       wrongWayTimer: this.root.querySelector('[data-wrong-way-timer]'),
       wrongWayBar: this.root.querySelector('[data-wrong-way-bar]'),
       result: this.root.querySelector('[data-result]'),
+      resultTitle: this.root.querySelector('[data-result-title]'),
       resultSummary: this.root.querySelector('[data-result-summary]'),
+      resultRanking: this.root.querySelector('[data-result-ranking]'),
       restart: this.root.querySelector('[data-restart]'),
     };
     this.refs.itemReel.innerHTML = REEL_SYMBOLS
@@ -181,13 +184,14 @@ export class HUD {
     style.textContent = `
       :root {
         --hud-ink: #f9fbff;
-        --hud-dark: rgba(12, 17, 24, 0.76);
-        --hud-panel: rgba(21, 30, 41, 0.76);
+        --hud-dark: rgba(10, 15, 22, 0.82);
+        --hud-panel: rgba(25, 35, 46, 0.84);
         --hud-line: rgba(255, 255, 255, 0.26);
         --hud-yellow: #ffd447;
         --hud-cyan: #39d8ff;
         --hud-red: #ff4f5f;
         --hud-green: #58e171;
+        --hud-track: rgba(255, 255, 255, 0.08);
       }
 
       .kart-hud {
@@ -210,18 +214,30 @@ export class HUD {
         position: absolute;
         border: 1px solid var(--hud-line);
         border-radius: 8px;
-        background: var(--hud-dark);
-        box-shadow: 0 14px 34px rgba(0, 0, 0, 0.28);
+        background:
+          linear-gradient(180deg, rgba(255, 255, 255, 0.08), transparent 38%),
+          var(--hud-dark);
+        box-shadow: 0 16px 36px rgba(0, 0, 0, 0.3);
         backdrop-filter: blur(10px);
+        overflow: hidden;
+      }
+
+      .hud-race-card::before,
+      .hud-meter-card::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        border-top: 3px solid var(--hud-yellow);
+        pointer-events: none;
       }
 
       .hud-race-card {
         top: 16px;
         left: 16px;
         display: grid;
-        grid-template-columns: 88px 178px;
+        grid-template-columns: 92px 190px;
         gap: 10px;
-        padding: 10px;
+        padding: 12px;
       }
 
       .hud-position {
@@ -252,16 +268,26 @@ export class HUD {
 
       .hud-race-meta {
         display: grid;
-        gap: 5px;
+        gap: 6px;
         align-content: center;
       }
 
-      .hud-race-meta div,
-      .hud-coins {
+      .hud-race-meta div {
         display: flex;
         align-items: center;
         justify-content: space-between;
         gap: 12px;
+        min-height: 25px;
+        padding: 4px 7px;
+        border-radius: 6px;
+        background: var(--hud-track);
+      }
+
+      .hud-coins {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        align-items: center;
+        gap: 8px 12px;
       }
 
       .hud-race-meta span,
@@ -587,14 +613,14 @@ export class HUD {
       .hud-meter-card {
         top: 16px;
         right: 16px;
-        width: 152px;
-        padding: 10px;
+        width: 164px;
+        padding: 12px;
       }
 
       .hud-speed {
         display: grid;
         justify-items: end;
-        padding: 10px 10px 8px;
+        padding: 12px 12px 9px;
         border-radius: 8px;
         background: linear-gradient(145deg, var(--hud-yellow), #ff9c31);
         color: #111820;
@@ -620,15 +646,19 @@ export class HUD {
       }
 
       .hud-coins {
-        margin-top: 9px;
+        margin-top: 10px;
+        padding: 9px 8px 8px;
+        border-radius: 8px;
+        background: var(--hud-track);
       }
 
       .coin-pips {
+        grid-column: 1 / -1;
         display: grid;
         grid-template-columns: repeat(5, 1fr);
         gap: 3px;
         width: 100%;
-        margin-top: 8px;
+        margin-top: 0;
       }
 
       .hud-race-options {
@@ -964,6 +994,49 @@ export class HUD {
         color: #38424b;
       }
 
+      .result-ranking {
+        display: grid;
+        gap: 7px;
+        margin: 0 0 20px;
+        padding: 0;
+        list-style: none;
+      }
+
+      .result-ranking li {
+        display: grid;
+        grid-template-columns: 42px minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 10px;
+        min-height: 40px;
+        padding: 7px 9px;
+        border: 1px solid rgba(20, 24, 30, 0.12);
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.62);
+      }
+
+      .result-ranking b,
+      .result-ranking strong,
+      .result-ranking span {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .result-ranking b {
+        font-weight: 1000;
+        color: #f0a91f;
+      }
+
+      .result-ranking strong {
+        text-align: left;
+      }
+
+      .result-ranking span {
+        color: #53606a;
+        font-size: 12px;
+        font-weight: 900;
+      }
+
       .result-panel button {
         border: 0;
         border-radius: 8px;
@@ -1257,7 +1330,7 @@ export class HUD {
     this.refs.wrongWayBar.style.setProperty('--wrong-way-progress', `${progress * 100}%`);
   }
 
-  update({ playerKart, raceManager, itemSystem, events = [], totalKarts, wrongWay = null, raceControls = null }) {
+  update({ playerKart, raceManager, itemSystem, events = [], totalKarts, wrongWay = null, raceControls = null, finalResults = null }) {
     this.processEvents(events);
 
     const state = raceManager.getKartState(playerKart.id);
@@ -1292,13 +1365,29 @@ export class HUD {
     this.renderEvents();
     this.refs.countdown.textContent = raceManager.getCountdownText();
 
-    if (raceManager.state === 'finished' && state?.finished) {
+    if (Array.isArray(finalResults) && finalResults.length) {
       this.refs.result.hidden = false;
+      this.refs.resultTitle.textContent = 'Classement final';
+      this.refs.resultSummary.textContent = 'Tous les joueurs connectes ont termine la course.';
+      this.refs.resultRanking.innerHTML = finalResults
+        .map((entry) => `
+          <li>
+            <b>#${entry.rank}</b>
+            <strong>${entry.name ?? entry.id ?? 'Player'}</strong>
+            <span>${entry.finished ? formatRaceTime(entry.finishTime) : 'DNF'}</span>
+          </li>
+        `)
+        .join('');
+    } else if (raceManager.state === 'finished' && state?.finished) {
+      this.refs.result.hidden = false;
+      this.refs.resultTitle.textContent = 'Course terminee';
       this.refs.resultSummary.textContent = `Finished ${position} / ${totalKarts} in ${formatRaceTime(
         state.finishTime,
-      )}. Best lap ${formatRaceTime(state.bestLapTime)}.`;
+      )}. En attente des autres joueurs.`;
+      this.refs.resultRanking.innerHTML = '';
     } else {
       this.refs.result.hidden = true;
+      this.refs.resultRanking.innerHTML = '';
     }
   }
 }

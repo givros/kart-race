@@ -3,9 +3,13 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
 const loader = new GLTFLoader();
 const modelCache = new Map();
-const assetBase = `${import.meta.env.BASE_URL ?? '/'}`.endsWith('/')
-  ? `${import.meta.env.BASE_URL ?? '/'}`
-  : `${import.meta.env.BASE_URL ?? '/'}/`;
+const maxParallelModelLoads = 4;
+const pendingModelLoads = [];
+let activeModelLoads = 0;
+const viteBaseUrl = import.meta.env?.BASE_URL ?? '/';
+const assetBase = `${viteBaseUrl}`.endsWith('/')
+  ? `${viteBaseUrl}`
+  : `${viteBaseUrl}/`;
 
 function kenneyUrl(...segments) {
   return `${assetBase}assets-kenny/${segments.map((segment) => encodeURIComponent(segment)).join('/')}`;
@@ -132,6 +136,26 @@ function setShadow(object, cast = true, receive = true) {
   });
 }
 
+function pumpModelLoadQueue() {
+  while (activeModelLoads < maxParallelModelLoads && pendingModelLoads.length > 0) {
+    const job = pendingModelLoads.shift();
+    activeModelLoads += 1;
+    job.run()
+      .then(job.resolve, job.reject)
+      .finally(() => {
+        activeModelLoads = Math.max(0, activeModelLoads - 1);
+        pumpModelLoadQueue();
+      });
+  }
+}
+
+function scheduleModelLoad(run) {
+  return new Promise((resolve, reject) => {
+    pendingModelLoads.push({ run, resolve, reject });
+    pumpModelLoadQueue();
+  });
+}
+
 function cloneMaterial(material, options) {
   const clone = material.clone();
   if (clone.color && options.tint != null) {
@@ -188,7 +212,7 @@ export function loadKenneyModel(url) {
   if (!modelCache.has(url)) {
     modelCache.set(
       url,
-      new Promise((resolve, reject) => {
+      scheduleModelLoad(() => new Promise((resolve, reject) => {
         loader.load(
           url,
           (gltf) => {
@@ -199,7 +223,7 @@ export function loadKenneyModel(url) {
           undefined,
           reject,
         );
-      }),
+      })),
     );
   }
   return modelCache.get(url);

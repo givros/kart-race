@@ -42,8 +42,8 @@ export class TrackDecor {
     };
 
     this.addBiomeLandmarks();
+    this.addOptimizedBiomeScatter();
     this.addFinishArena();
-    this.addKenneyAssetPass();
     this.addTrees();
     this.addLowPolyTerrainProps();
     this.addSpectatorArea();
@@ -196,6 +196,127 @@ export class TrackDecor {
     this.addDirtCanyonProps();
     this.addDesertProps();
     this.addForestSectionProps();
+  }
+
+  addOptimizedBiomeScatter() {
+    const dummy = new THREE.Object3D();
+    const configs = [
+      {
+        name: 'CircuitGrass',
+        start: 0.0,
+        end: 0.16,
+        count: 90,
+        geometry: new THREE.ConeGeometry(0.8, 1.8, 5),
+        material: this.materials.pineLight,
+        minOffset: 22,
+        maxOffset: 76,
+        minScale: 0.55,
+        maxScale: 1.25,
+        y: 0.9,
+      },
+      {
+        name: 'CityBlocks',
+        start: 0.16,
+        end: 0.31,
+        count: 48,
+        geometry: new THREE.BoxGeometry(2.2, 1.2, 2.2),
+        material: this.materials.cityDark,
+        minOffset: 22,
+        maxOffset: 58,
+        minScale: 0.8,
+        maxScale: 2.2,
+        y: 0.6,
+      },
+      {
+        name: 'SnowRocks',
+        start: 0.31,
+        end: 0.47,
+        count: 72,
+        geometry: new THREE.DodecahedronGeometry(1.1, 0),
+        material: this.materials.snow,
+        minOffset: 18,
+        maxOffset: 64,
+        minScale: 0.8,
+        maxScale: 2.2,
+        y: 0.55,
+      },
+      {
+        name: 'DirtBoulders',
+        start: 0.47,
+        end: 0.63,
+        count: 80,
+        geometry: new THREE.DodecahedronGeometry(1.25, 0),
+        material: this.materials.dirtWall,
+        minOffset: 18,
+        maxOffset: 58,
+        minScale: 0.9,
+        maxScale: 2.6,
+        y: 0.6,
+      },
+      {
+        name: 'SandDunes',
+        start: 0.63,
+        end: 0.8,
+        count: 96,
+        geometry: new THREE.DodecahedronGeometry(1.2, 0),
+        material: this.materials.sand,
+        minOffset: 20,
+        maxOffset: 72,
+        minScale: 1.1,
+        maxScale: 3.0,
+        y: 0.35,
+        flattenY: 0.32,
+      },
+      {
+        name: 'ForestTrees',
+        start: 0.8,
+        end: 0.96,
+        count: 120,
+        geometry: new THREE.ConeGeometry(1.35, 4.4, 5),
+        material: this.materials.pineDark,
+        minOffset: 19,
+        maxOffset: 78,
+        minScale: 0.65,
+        maxScale: 1.55,
+        y: 2.2,
+      },
+    ];
+
+    for (const config of configs) {
+      const mesh = new THREE.InstancedMesh(config.geometry, config.material, config.count);
+      mesh.name = `Optimized_${config.name}`;
+      mesh.frustumCulled = true;
+      mesh.castShadow = false;
+      mesh.receiveShadow = false;
+
+      for (let i = 0; i < config.count; i += 1) {
+        const progress = randomRange(this.random, config.start, config.end);
+        const side = this.random() > 0.5 ? 1 : -1;
+        const lateral = side * randomRange(
+          this.random,
+          this.track.halfWidth + config.minOffset,
+          this.track.halfWidth + config.maxOffset,
+        );
+        const { position, yaw } = this.getTrackPlacement(progress, lateral, config.y);
+        const scale = randomRange(this.random, config.minScale, config.maxScale);
+        dummy.position.copy(position);
+        dummy.rotation.set(
+          randomRange(this.random, -0.04, 0.04),
+          yaw + randomRange(this.random, -Math.PI, Math.PI),
+          randomRange(this.random, -0.04, 0.04),
+        );
+        dummy.scale.set(
+          scale * randomRange(this.random, 0.72, 1.28),
+          scale * (config.flattenY ?? 1),
+          scale * randomRange(this.random, 0.72, 1.28),
+        );
+        dummy.updateMatrix();
+        mesh.setMatrixAt(i, dummy.matrix);
+      }
+
+      mesh.instanceMatrix.needsUpdate = true;
+      this.scene.add(mesh);
+    }
   }
 
   addFinishArena() {

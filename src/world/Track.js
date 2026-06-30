@@ -144,6 +144,7 @@ export class Track {
     this.samples = [];
     this.cumulativeLengths = [];
     this.totalLength = 1;
+    this.nearestInfoCache = new WeakMap();
     this.generateSamples();
     this.createTrackMeshes();
     this.createShortcuts();
@@ -763,18 +764,7 @@ export class Track {
   getFrameAtProgress(progress) {
     const wrapped = wrap01(progress);
     const targetDistance = wrapped * this.totalLength;
-    let index = 0;
-
-    for (let i = 0; i < this.sampleCount; i += 1) {
-      const nextIndex = (i + 1) % this.sampleCount;
-      const start = this.samples[i].distance;
-      const end =
-        nextIndex === 0 ? this.totalLength : this.samples[nextIndex].distance;
-      if (targetDistance >= start && targetDistance <= end) {
-        index = i;
-        break;
-      }
-    }
+    const index = this.getSampleIndexAtDistance(targetDistance);
 
     const nextIndex = (index + 1) % this.sampleCount;
     const a = this.samples[index];
@@ -792,11 +782,28 @@ export class Track {
     return { point, tangent, normal, progress: wrapped, distance: targetDistance };
   }
 
-  getNearestInfo(position) {
+  getSampleIndexAtDistance(targetDistance) {
+    let low = 0;
+    let high = this.sampleCount - 1;
+    while (low <= high) {
+      const mid = (low + high) >> 1;
+      const nextIndex = (mid + 1) % this.sampleCount;
+      const start = this.samples[mid].distance;
+      const end = nextIndex === 0 ? this.totalLength : this.samples[nextIndex].distance;
+      if (targetDistance >= start && targetDistance <= end) return mid;
+      if (targetDistance < start) high = mid - 1;
+      else low = mid + 1;
+    }
+    return Math.max(0, Math.min(this.sampleCount - 1, low - 1));
+  }
+
+  findNearestInfoInRange(position, startIndex, endIndex) {
     let bestDistanceSq = Infinity;
     let best = null;
+    const count = Math.max(1, endIndex - startIndex + 1);
 
-    for (let i = 0; i < this.sampleCount; i += 1) {
+    for (let offset = 0; offset < count; offset += 1) {
+      const i = ((startIndex + offset) % this.sampleCount + this.sampleCount) % this.sampleCount;
       const nextIndex = (i + 1) % this.sampleCount;
       const a = this.samples[i].point;
       const b = this.samples[nextIndex].point;
@@ -826,6 +833,39 @@ export class Track {
     }
 
     return best;
+  }
+
+  getNearestInfo(position) {
+    const cached = this.nearestInfoCache.get(position);
+    const canUseCache =
+      cached?.center &&
+      cached.segmentIndex != null &&
+      position.distanceToSquared(cached.center) < 80 * 80;
+
+    let info = null;
+    if (canUseCache) {
+      const searchWindow = 96;
+      info = this.findNearestInfoInRange(
+        position,
+        cached.segmentIndex - searchWindow,
+        cached.segmentIndex + searchWindow,
+      );
+      const fallbackDistance = this.halfWidth + this.runoffWidth + 34;
+      if (!info || info.distanceFromCenter > fallbackDistance) {
+        info = null;
+      }
+    }
+
+    if (!info) {
+      info = this.findNearestInfoInRange(position, 0, this.sampleCount - 1);
+    }
+    if (info) {
+      this.nearestInfoCache.set(position, {
+        segmentIndex: info.segmentIndex,
+        center: info.center.clone(),
+      });
+    }
+    return info;
   }
 
   progressSpan(startProgress, endProgress) {

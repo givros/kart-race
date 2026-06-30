@@ -45,7 +45,7 @@ export class KartPhysics {
       kart.driftCharge = Math.max(0, kart.driftCharge - dt * 2.8);
     }
 
-    kart.boostTimer = 0;
+    kart.boostTimer = Math.max(0, kart.boostTimer - dt);
 
     const turnSlip = clamp(Math.abs(kart.steeringAngle) * absForwardSpeed / 42, 0, 0.7);
     const driftGripScale = wantsDrift ? 0.42 : 1.1 - turnSlip * 0.28;
@@ -62,13 +62,17 @@ export class KartPhysics {
     if (brake > 0) {
       force -= forwardSpeed > 1.2 ? kart.brakeForce * brake : kart.reverseForce * brake;
     }
+    if (kart.boostTimer > 0) {
+      force += kart.boostPower * 1.25;
+    }
     kart.velocity.addScaledVector(forward, force * dt);
 
     const statusSpeedFactor = slowed ? 0.64 : 1;
     const invincibleBonus = kart.invincibleTimer > 0 ? 5 : 0;
     const maxSpeed = (
       kart.maxSpeed +
-      invincibleBonus
+      invincibleBonus +
+      (kart.boostTimer > 0 ? 12 : 0)
     ) * surface.speedFactor * statusSpeedFactor;
     const newForwardSpeed = kart.velocity.dot(forward);
     if (newForwardSpeed > maxSpeed) {
@@ -77,7 +81,7 @@ export class KartPhysics {
       kart.velocity.addScaledVector(forward, -11 - newForwardSpeed);
     }
 
-    const coastingDrag = throttle > 0 ? 0 : 0.16;
+    const coastingDrag = throttle > 0 || kart.boostTimer > 0 ? 0 : 0.16;
     const drag = 0.055 + surface.drag * 0.55 + coastingDrag + (wantsDrift ? 0.08 : 0) + (stunned ? 0.8 : 0);
     kart.velocity.multiplyScalar(Math.max(0, 1 - drag * dt));
 
@@ -143,7 +147,7 @@ export class KartPhysics {
     kart.velocity.copy(wallTangent).addScaledVector(normal, -inwardBounce);
     kart.yaw += side * Math.sign(tangentSpeed || 1) * clamp(incomingSpeed * 0.012 + overshoot * 0.025, 0.035, 0.24);
     kart.driftCharge = Math.max(0, kart.driftCharge - 0.55);
-    kart.boostTimer = 0;
+    kart.boostTimer = Math.min(kart.boostTimer, 0.18);
 
     return clamp((incomingSpeed + overshoot * 2) / 24, 0.1, 1);
   }
